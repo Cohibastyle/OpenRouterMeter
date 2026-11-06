@@ -36,6 +36,9 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      - name: Bundle app
+        run: npm run build
+
       - name: Build DMG
         run: npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
         env:

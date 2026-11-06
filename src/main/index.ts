@@ -1542,6 +1542,36 @@ async function runCapture(): Promise<void> {
     writeFileSync(join(outDir, `final-${w}x${h}.png`), im.toPNG());
   }
 
+  // TEMP-CHART
+  const worst = 'OpenRouter reports daily totals only, so the short windows cannot be computed. Daily report stops at Oct 30, 5 days ago. Today is live from the account counter; charts cover reported days only.';
+  for (const tabName of ['requests', 'spending']) {
+    for (const w of [360, 420, 520, 600, 760, 900]) {
+      for (let h = 200; h <= 300; h += 10) {
+        mainWindow.setBounds({ x: 60, y: 60, width: w, height: h });
+        mainWindow.webContents.send('view:tab', tabName);
+        await new Promise((r) => setTimeout(r, 300));
+        const info = await mainWindow.webContents.executeJavaScript(`(() => {
+          const view = document.querySelector('.view');
+          if (!view) return null;
+          const chart = document.querySelector('.inline-chart');
+          const measure = () => {
+            const cw = document.querySelector('.chart-wrap');
+            return { ovf: view.scrollHeight - view.clientHeight, cwH: cw ? Math.round(cw.getBoundingClientRect().height) : null, icH: chart ? Math.round(chart.getBoundingClientRect().height) : null };
+          };
+          const plain = measure();
+          const note = document.createElement('div');
+          note.className = 'lag-note';
+          note.textContent = ${JSON.stringify(worst)};
+          view.insertBefore(note, view.children[1] ?? null);
+          const withNote = measure();
+          note.remove();
+          return { showChart: Boolean(chart), plain, withNote };
+        })()`);
+        console.log('CHART', JSON.stringify({ tabName, w, h, ...info }));
+      }
+    }
+  }
+
   // Settings help popup: hover a label so the verbose explanation is visible.
   mainWindow.setBounds({ x: 60, y: 60, width: 520, height: 620 });
   mainWindow.webContents.send('view:tab', 'settings');
