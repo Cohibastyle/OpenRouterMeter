@@ -1527,6 +1527,21 @@ async function runCapture(): Promise<void> {
     console.log(`captured 16-range-${range} (header: ${label})`);
   }
 
+  // TEMP-CHART
+  for (const [w, h] of [[766, 500], [766, 400], [520, 280], [520, 279], [760, 300], [900, 560]] as Array<[number, number]>) {
+    mainWindow.setBounds({ x: 60, y: 60, width: w, height: h });
+    mainWindow.webContents.send('view:tab', 'requests');
+    await new Promise((r) => setTimeout(r, 900));
+    const info = await mainWindow.webContents.executeJavaScript(`(() => {
+      const view = document.querySelector('.view');
+      const ic = document.querySelector('.inline-chart');
+      return { ovf: view.scrollHeight - view.clientHeight, mode: document.getElementById('root').dataset.mode, chart: Boolean(ic) };
+    })()`);
+    console.log('CHART', JSON.stringify({ w, h, ...info }));
+    const im = await mainWindow.webContents.capturePage();
+    writeFileSync(join(outDir, `final-${w}x${h}.png`), im.toPNG());
+  }
+
   // Settings help popup: hover a label so the verbose explanation is visible.
   mainWindow.setBounds({ x: 60, y: 60, width: 520, height: 620 });
   mainWindow.webContents.send('view:tab', 'settings');
