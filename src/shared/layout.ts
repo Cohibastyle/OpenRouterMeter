@@ -140,7 +140,7 @@ export function layoutFor(width: number, height: number): LayoutInfo {
     // Regular height the strip, the headline, and the source note can leave too
     // little for the plot, and the inline chart cannot shrink past its floor, so
     // its X-axis labels would be clipped instead of the chart being dropped.
-    showChart: mode === 'expanded' || mode === 'standard',
+    showChart: mode === 'expanded' || (mode === 'standard' && height >= CHART_MIN_HEIGHT),
   };
 }
 

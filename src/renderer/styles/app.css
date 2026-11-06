@@ -898,14 +898,6 @@ body {
   flex-direction: column;
 }
 
-/* Standard has less height to spend than Expanded, and a source note can appear
-   above the chart at any time. Letting the plot shrink all the way keeps the
-   view from clipping its X-axis labels; the renderer stops drawing labels once
-   there is no room for them. */
-.root[data-mode='standard'] .chart-wrap {
-  min-height: 0;
-}
-
 .chart-canvas {
   flex: 1;
   min-height: 0;

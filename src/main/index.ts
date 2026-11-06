@@ -1527,41 +1527,6 @@ async function runCapture(): Promise<void> {
     console.log(`captured 16-range-${range} (header: ${label})`);
   }
 
-  // TEMP-CHART
-  const worst = 'OpenRouter reports daily totals only, so the short windows cannot be computed. Daily report stops at Oct 30, 5 days ago. Today is live from the account counter; charts cover reported days only.';
-  for (const tabName of ['requests', 'spending']) {
-    for (const w of [360, 420, 520, 600, 760, 900]) {
-      for (const h of [200, 210, 220, 230, 240, 250, 260, 280]) {
-        mainWindow.setBounds({ x: 60, y: 60, width: w, height: h });
-        mainWindow.webContents.send('view:tab', tabName);
-        await new Promise((r) => setTimeout(r, 300));
-        const info = await mainWindow.webContents.executeJavaScript(`(() => {
-          const view = document.querySelector('.view');
-          if (!view) return null;
-          const chart = document.querySelector('.inline-chart');
-          const note = document.createElement('div');
-          note.className = 'lag-note';
-          note.textContent = ${JSON.stringify(worst)};
-          view.insertBefore(note, view.children[1] ?? null);
-          const cw = document.querySelector('.chart-wrap');
-          const out = {
-            ovf: view.scrollHeight - view.clientHeight,
-            noteH: Math.round(note.getBoundingClientRect().height),
-            cwH: cw ? Math.round(cw.getBoundingClientRect().height) : null,
-            showChart: Boolean(chart),
-          };
-          note.remove();
-          return out;
-        })()`);
-        console.log('CHART', JSON.stringify({ tabName, w, h, ...info }));
-        if (tabName === 'requests' && w === 520) {
-          const im = await mainWindow.webContents.capturePage();
-          writeFileSync(join(outDir, `99-c-520x${h}.png`), im.toPNG());
-        }
-      }
-    }
-  }
-
   // Settings help popup: hover a label so the verbose explanation is visible.
   mainWindow.setBounds({ x: 60, y: 60, width: 520, height: 620 });
   mainWindow.webContents.send('view:tab', 'settings');
