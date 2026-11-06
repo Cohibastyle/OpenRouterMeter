@@ -28,6 +28,10 @@
     "productName": "OpenRouter Meter",
     "files": [
       "dist/**/*",
+      "!dist/mac*/**",
+      "!dist/*.dmg",
+      "!dist/*.blockmap",
+      "!dist/builder-*.yml",
       "package.json"
     ],
     "mac": {
