@@ -1,0 +1,2244 @@
+:root {
+  --bg: #0d1117;
+  --panel: rgba(22, 27, 34, 0.86);
+  --panel-solid: #161b22;
+  --panel-raised: rgba(33, 38, 45, 0.92);
+  --border: rgba(240, 246, 252, 0.1);
+  --border-strong: rgba(240, 246, 252, 0.18);
+  --text: #e6edf3;
+  --text-dim: #9aa4b2;
+  --text-faint: #6e7681;
+  --input: #fb923c;
+  --output: #fdba74;
+  --spend: #34d399;
+  --error: #f87171;
+  --warn: #fbbf24;
+  --info: #60a5fa;
+  --debug: #8b949e;
+  --accent: #58a6ff;
+  --focus: #79c0ff;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --pad: 10px;
+  --gap: 8px;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', system-ui, sans-serif;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+  --fs-xs: 10px;
+  --fs-sm: 11px;
+  --fs-md: 12px;
+  --fs-lg: 15px;
+  --fs-xl: 22px;
+  --fs-xxl: 30px;
+}
+
+:root[data-theme='light'] {
+  --bg: #f6f8fa;
+  --panel: rgba(255, 255, 255, 0.9);
+  --panel-solid: #ffffff;
+  --panel-raised: rgba(246, 248, 250, 0.96);
+  --border: rgba(31, 35, 40, 0.12);
+  --border-strong: rgba(31, 35, 40, 0.22);
+  --text: #1f2328;
+  --text-dim: #59636e;
+  --text-faint: #818b98;
+  --input: #c2410c;
+  --output: #ea580c;
+  --spend: #047857;
+  --error: #b91c1c;
+  --warn: #a16207;
+  --info: #1d4ed8;
+  --debug: #6e7781;
+  --accent: #0969da;
+  --focus: #0969da;
+}
+
+/*
+ * One accent per tab, so the active tab, its selected interval, and its values
+ * are recognisably related. Every colour is a light tint chosen for contrast
+ * against the dark panel; none of them is near-black in either theme.
+ */
+:root {
+  --accent-spending: #34d399;
+  --accent-spending-soft: rgba(52, 211, 153, 0.14);
+  --accent-tokens: #fb923c;
+  --accent-tokens-soft: rgba(251, 146, 60, 0.14);
+  --accent-keys: #a78bfa;
+  --accent-keys-soft: rgba(167, 139, 250, 0.14);
+  --accent-models: #60a5fa;
+  --accent-models-soft: rgba(96, 165, 250, 0.14);
+  --accent-settings: #94a3b8;
+  --accent-settings-soft: rgba(148, 163, 184, 0.14);
+}
+
+:root[data-theme='light'] {
+  --accent-spending: #047857;
+  --accent-spending-soft: rgba(4, 120, 87, 0.12);
+  --accent-tokens: #c2410c;
+  --accent-tokens-soft: rgba(194, 65, 12, 0.12);
+  --accent-keys: #6d28d9;
+  --accent-keys-soft: rgba(109, 40, 217, 0.12);
+  --accent-models: #1d4ed8;
+  --accent-models-soft: rgba(29, 78, 216, 0.12);
+  --accent-settings: #4b5563;
+  --accent-settings-soft: rgba(75, 85, 99, 0.12);
+}
+
+/* Each tab body inherits its own accent, so selected intervals and values follow. */
+[data-tab-theme='spending'] {
+  --tab-accent: var(--accent-spending);
+  --tab-accent-soft: var(--accent-spending-soft);
+}
+[data-tab-theme='requests'] {
+  --tab-accent: var(--accent-tokens);
+  --tab-accent-soft: var(--accent-tokens-soft);
+}
+[data-tab-theme='api'] {
+  --tab-accent: var(--accent-keys);
+  --tab-accent-soft: var(--accent-keys-soft);
+}
+[data-tab-theme='models'] {
+  --tab-accent: var(--accent-models);
+  --tab-accent-soft: var(--accent-models-soft);
+}
+[data-tab-theme='settings'] {
+  --tab-accent: var(--accent-settings);
+  --tab-accent-soft: var(--accent-settings-soft);
+}
+
+:root[data-density='compact'] {
+  --pad: 6px;
+  --gap: 5px;
+  --fs-xs: 9px;
+  --fs-sm: 10px;
+  --fs-md: 11px;
+  --fs-lg: 13px;
+  --fs-xl: 18px;
+  --fs-xxl: 24px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: var(--font);
+  color: var(--text);
+  font-size: var(--fs-md);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+.root {
+  position: relative;
+  height: 100vh;
+  width: 100vw;
+  padding: 0;
+  overflow: hidden;
+}
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  backdrop-filter: blur(18px) saturate(140%);
+}
+
+.root[data-mode='micro'] .shell {
+  border-radius: var(--radius-sm);
+}
+
+/* ---------- status bar ---------- */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 4px 0 var(--pad);
+  border-bottom: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.16);
+  -webkit-app-region: drag;
+}
+
+:root[data-theme='light'] .statusbar {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.root[data-mode='micro'] .statusbar {
+  height: 20px;
+  min-height: 20px;
+  padding-left: 6px;
+}
+
+.drag-region {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.app-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 0 auto;
+}
+
+/* The title is the first thing to go when the window is too narrow for it. */
+.root[data-width-class='xs'] .app-title {
+  display: none;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex: 0 0 auto;
+  transition: background 200ms ease;
+}
+
+.status-dot[data-state='ok'] {
+  background: var(--spend);
+  box-shadow: 0 0 6px rgba(52, 211, 153, 0.6);
+}
+
+.status-dot[data-state='stale'] {
+  background: var(--warn);
+}
+
+.status-dot[data-state='error'] {
+  background: var(--error);
+}
+
+.status-dot[data-state='sample'] {
+  background: var(--info);
+}
+
+.status-text {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+}
+
+.status-age {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.sample-badge {
+  font-size: var(--fs-xs);
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(96, 165, 250, 0.16);
+  color: var(--info);
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.window-controls {
+  display: flex;
+  gap: 1px;
+  -webkit-app-region: no-drag;
+  flex: 0 0 auto;
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.icon-btn svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
+.icon-btn:hover {
+  background: rgba(240, 246, 252, 0.1);
+  color: var(--text);
+}
+
+.icon-btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.root[data-mode='micro'] .window-controls .icon-btn:not(#btn-close) {
+  display: none;
+}
+
+/* ---------- banner ---------- */
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px var(--pad);
+  background: rgba(248, 113, 113, 0.14);
+  border-bottom: 1px solid rgba(248, 113, 113, 0.3);
+  font-size: var(--fs-sm);
+  color: var(--error);
+}
+
+.banner span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-btn {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 2px 4px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.link-btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+/* ---------- content ---------- */
+
+.content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  padding: var(--pad);
+  overflow: hidden;
+}
+
+.view.scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.view.scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.view.scroll::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+
+/* ---------- summary strip ---------- */
+
+.strip {
+  display: grid;
+  gap: 3px;
+  flex: 0 0 auto;
+  /* Always one row of all five intervals, at every window size. Narrow windows
+     drop the value and the request count instead of wrapping or hiding an
+     interval behind an overflow control. */
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+/* ---------- inline chart ---------- */
+
+.inline-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  /* No fixed floor: the wrap below already sets the smallest plot worth drawing,
+     and a taller floor here made the chart overflow the view (clipping its X-axis
+     labels) whenever the window was short. Standard mode drops the chart below
+     CHART_MIN_HEIGHT instead of squeezing it this far. */
+  min-height: 0;
+  min-width: 0;
+}
+
+.inline-chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.inline-chart-range {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.segmented-sm button {
+  font-size: var(--fs-xs);
+  padding: 2px 6px;
+}
+
+/* ---------- end inline chart ---------- */
+
+.cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-raised);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  min-width: 0;
+  position: relative;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+/*
+ * A cell too narrow for its value shows the interval alone. Centring it keeps
+ * the strip reading as a row of range buttons rather than a row of labels
+ * pinned to the top of tall empty boxes.
+ *
+ * The label keeps the same font, weight, and colour as it has at every other
+ * detail level: a larger or brighter label-only cell made the range row look
+ * like a different control at small sizes than at large ones.
+ */
+.strip[data-detail='label'] .cell {
+  align-items: center;
+  justify-content: center;
+  padding: 5px 4px;
+}
+
+/*
+ * At the widest level all three parts share one line, so the cell reads as a
+ * compact readout rather than a stacked card. The interval sits first, then the
+ * figure, then the count, with the figure taking the accent.
+ */
+.strip[data-detail='full'] .cell {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 8px;
+}
+
+.strip[data-detail='full'] .cell-label {
+  flex: 0 0 auto;
+}
+
+.strip[data-detail='full'] .cell-value {
+  flex: 0 1 auto;
+}
+
+.strip[data-detail='full'] .cell-sub {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.cell:hover {
+  border-color: var(--border-strong);
+  background: rgba(48, 54, 61, 0.9);
+}
+
+/*
+ * The selected interval is the one whose total and chart are on screen. Without
+ * this the strip reads as five independent numbers with no indication of which
+ * one the rest of the tab is describing.
+ */
+.cell[aria-selected='true'] {
+  border-color: var(--tab-accent, var(--accent));
+  background: var(--tab-accent-soft, rgba(88, 166, 255, 0.14));
+  box-shadow: inset 0 0 0 1px var(--tab-accent, var(--accent));
+}
+
+.cell[aria-selected='true'] .cell-label {
+  color: var(--tab-accent, var(--accent));
+  font-weight: 600;
+}
+
+.cell:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.cell[data-coverage='partial'] {
+  border-style: dashed;
+}
+
+.cell[data-coverage='unavailable'] {
+  opacity: 0.55;
+}
+
+.cell-label {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cell-value {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/*
+ * The interval value takes the tab accent, not a fixed green. A hardcoded
+ * --spend here made the Keys and Models strips show green money next to a
+ * violet or cyan selected cell, so the same interval looked like two different
+ * measures on two tabs.
+ */
+
+.cell-sub {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cell-marker {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  font-size: 8px;
+  color: var(--warn);
+  line-height: 1;
+}
+
+/* ---------- metric blocks ---------- */
+
+.metrics {
+  display: flex;
+  gap: var(--gap);
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.metric {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.metric-value {
+  font-size: var(--fs-xxl);
+  font-weight: 650;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * The headline and its increase chip share a row. The value keeps the display
+ * size; the chip is deliberately smaller so it reads as an annotation rather
+ * than a second headline.
+ */
+.metric-headline {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.metric-headline .metric-value {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/*
+ * In the fitted modes the number is sized to fill the box, so the chip cannot
+ * sit beside it: it would take width from the number and force the fit to
+ * shrink it. The chip goes under the number instead, and the fit reserves its
+ * height.
+ */
+.metric-headline.is-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 2px;
+}
+
+.metric-headline.is-stacked .metric-increase {
+  padding-top: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+/*
+ * The box the stacked chip lives in. It is always in the row, even when there is
+ * no rise to show, so the group the number is centred within keeps one height:
+ * a slot that came and went would lift the number while the chip was visible and
+ * drop it again when the chip expired.
+ */
+.metric-increase-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* The height each mode reserves, matching a chip with its request line. */
+.root[data-mode='micro'] .metric-increase-slot {
+  min-height: calc(var(--fs-xs) * 1.2);
+}
+
+.root[data-mode='compact'] .metric-increase-slot {
+  min-height: calc(var(--fs-sm) * 1.2 + var(--fs-xs) * 1.2);
+}
+
+/* A narrow window can be shorter than the chip, so the amount is clipped rather
+   than allowed to widen the row. */
+.metric-headline.is-stacked .metric-increase-value,
+.metric-headline.is-stacked .metric-increase-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The fit already sized the number to the space left over, so it must not be
+   shrunk again by the flex line. */
+.metric-headline.is-stacked .metric-value {
+  flex: 0 0 auto;
+}
+
+.metric-increase {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex: 0 0 auto;
+  padding-top: 2px;
+  color: var(--tab-accent, var(--spend));
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  opacity: 1;
+  /* The fade and the fresh-rise invert are both driven from script so a
+     re-render can resume them where the old element left off. */
+  transition:
+    opacity 400ms ease-out,
+    background-color 220ms ease-out,
+    color 220ms ease-out;
+}
+
+.metric-increase.is-fading {
+  opacity: 0;
+}
+
+/*
+ * A freshly recorded rise inverts for a moment: the chip fills with the tab
+ * accent and its text takes the panel colour, so a delta the eye has not seen
+ * before announces itself and then settles back into the annotation it becomes.
+ *
+ * The fill is grown with a spread shadow rather than with padding, because the
+ * chip sits beside a headline that is fitted to its box: a wider chip would
+ * resize the number for the duration of the flash.
+ */
+.metric-increase.is-new {
+  background: var(--tab-accent, var(--spend));
+  color: var(--panel-solid, #161b22);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 4px var(--tab-accent, var(--spend));
+}
+
+.metric-increase.is-new .metric-increase-sub {
+  color: inherit;
+  opacity: 0.72;
+}
+
+.metric-increase-value {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.metric-increase-sub {
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--text-dim);
+  line-height: 1.2;
+}
+
+/* ---------- rolling digits ---------- */
+
+/*
+ * One digit window. The height matches WINDOW_EM in odometer.ts: shorter than a
+ * cell and centred on the glyph's ink, so a digit at rest fills it and a digit
+ * mid-roll shows only a thin sliver of its neighbour.
+ *
+ * There is deliberately no fade mask: shading the window edges tinted the tops
+ * and bottoms of every digit at rest, which read as worn print rather than as
+ * motion. The clipping edge alone is the boundary.
+ */
+.odo {
+  display: inline-block;
+  height: 0.78em;
+  overflow: hidden;
+  vertical-align: top;
+}
+
+.odo-strip {
+  display: flex;
+  flex-direction: column;
+  will-change: transform;
+}
+
+.odo-cell {
+  height: 1em;
+  line-height: 1em;
+  display: block;
+}
+
+/* A fixed character keeps a full cell so its glyph centres on the same line as
+   the digits, whose ink is centred inside the shorter window. */
+.odo-fixed {
+  display: inline-block;
+  height: 1em;
+  line-height: 1em;
+  vertical-align: top;
+}
+
+/*
+ * Headline values carry the tab accent, matching the selected interval above
+ * them. A plain white token total next to a white interval box made the Tokens
+ * tab read as unthemed compared with Spending's green.
+ */
+.metric-value.spend,
+.metric-value.tokens {
+  color: var(--tab-accent, var(--spend));
+}
+
+/* A dash placeholder must not read as a filled bar at display size. */
+.metric-value.pending {
+  color: var(--text-dim);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.metric-sub {
+  display: flex;
+  gap: 8px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  flex-wrap: wrap;
+}
+
+.metric-sub .in {
+  color: var(--input);
+}
+
+.metric-sub .out {
+  color: var(--output);
+}
+
+/*
+ * In Micro the headline is the whole point of the window, so it is sized to fill
+ * the space rather than set at a fixed step. The size is computed from the
+ * measured box in fitHeadline(), which keeps the number as large as it can be
+ * without clipping or ellipsis.
+ */
+.root[data-mode='micro'] .metric-value {
+  font-size: var(--fs-lg);
+  line-height: 1.05;
+  text-overflow: clip;
+}
+
+.root[data-mode='micro'] .metric-headline {
+  flex: 1 1 auto;
+  align-items: center;
+  min-height: 0;
+}
+
+/* Micro has no room for the request count under the chip, and the chip itself
+   must not push the headline into an ellipsis. */
+.root[data-mode='micro'] .metric-increase-sub {
+  display: none;
+}
+
+.root[data-mode='micro'] .metric-increase-value {
+  font-size: var(--fs-xs);
+}
+
+.root[data-mode='micro'] .metric-headline {
+  gap: 5px;
+}
+
+/*
+ * A stacked chip is left-aligned under the number, not centred with it, and the
+ * gap is the one the fit reserves. These rules outrank the per-mode row rules
+ * above, which set `align-items` and `gap` for the side-by-side layout.
+ */
+.root[data-mode='micro'] .metric-headline.is-stacked,
+.root[data-mode='compact'] .metric-headline.is-stacked {
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.root[data-mode='compact'] .metric-increase-value {
+  font-size: var(--fs-sm);
+}
+
+.root[data-mode='micro'] .metrics {
+  flex: 1 1 auto;
+  align-items: stretch;
+  min-height: 0;
+}
+
+/* The metric block owns the leftover height so the headline can be measured
+   against a real box rather than its own text. */
+.root[data-mode='micro'] .metric {
+  justify-content: center;
+  min-height: 0;
+}
+
+.root[data-mode='micro'] .view {
+  gap: 2px;
+}
+
+.root[data-mode='micro'] .strip {
+  flex: 0 0 auto;
+}
+
+.root[data-mode='micro'] .cell {
+  padding: 2px 3px;
+}
+
+.root[data-mode='micro'] .status-age {
+  display: none;
+}
+
+/*
+ * Compact has no chart, so the headline is the only content under the strip and
+ * should take the height it is given. The size itself is set by fitHeadline().
+ */
+.root[data-mode='compact'] .metric-value {
+  font-size: var(--fs-xl);
+  text-overflow: clip;
+}
+
+.root[data-mode='compact'] .metrics {
+  flex: 1 1 auto;
+  align-items: stretch;
+  min-height: 0;
+}
+
+.root[data-mode='compact'] .metric {
+  justify-content: center;
+  min-height: 0;
+}
+
+.root[data-mode='compact'] .metric-headline {
+  flex: 1 1 auto;
+  align-items: center;
+  min-height: 0;
+}
+
+/* ---------- chart ---------- */
+
+.chart-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 40px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Standard has less height to spend than Expanded, and a source note can appear
+   above the chart at any time. Letting the plot shrink all the way keeps the
+   view from clipping its X-axis labels; the renderer stops drawing labels once
+   there is no room for them. */
+.root[data-mode='standard'] .chart-wrap {
+  min-height: 0;
+}
+
+.chart-canvas {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: block;
+}
+
+.chart-tooltip {
+  position: absolute;
+  z-index: 20;
+  pointer-events: none;
+  background: var(--panel-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 5px 7px;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-tooltip .tt-title {
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+
+.chart-tooltip .tt-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* ---------- tab bar ---------- */
+
+.tabbar {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 3px;
+  border-top: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.2);
+  flex: 0 0 auto;
+}
+
+:root[data-theme='light'] .tabbar {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.root[data-mode='micro'] .tabbar {
+  height: 24px;
+  min-height: 24px;
+}
+
+.tab {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  margin: 3px 0;
+  padding: 0 4px;
+  position: relative;
+  transition: color 120ms ease, background 120ms ease;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.tab svg {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+  flex: 0 0 auto;
+}
+
+.tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab:hover {
+  color: var(--text-dim);
+  background: rgba(240, 246, 252, 0.06);
+}
+
+.tab[aria-selected='true'] {
+  color: var(--text);
+  background: var(--tab-accent-soft, rgba(88, 166, 255, 0.14));
+}
+
+.tab[aria-selected='true']::after {
+  content: '';
+  position: absolute;
+  bottom: -3px;
+  left: 20%;
+  right: 20%;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--tab-accent, var(--accent));
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.tab-badge {
+  position: absolute;
+  top: 1px;
+  right: 2px;
+  min-width: 12px;
+  height: 12px;
+  padding: 0 3px;
+  border-radius: 6px;
+  background: var(--error);
+  color: #fff;
+  font-size: 8px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+}
+
+.root[data-icon-rail='true'] .tab-label {
+  display: none;
+}
+
+.root[data-icon-rail='true'] .tab {
+  flex: 1;
+}
+
+/*
+ * Micro is the narrowest mode, so the five icons get the whole bar and a
+ * slightly larger glyph. The bar is the only way to change tabs at this size,
+ * so the icons must stay comfortably tappable rather than shrinking with the
+ * window.
+ */
+.root[data-mode='micro'] .tab {
+  padding: 0 2px;
+}
+
+.root[data-mode='micro'] .tab svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* ---------- lists ---------- */
+
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.list::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+
+.row {
+  display: grid;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  border: 1px solid transparent;
+  min-width: 0;
+}
+
+.row:hover {
+  background: rgba(240, 246, 252, 0.05);
+  border-color: var(--border);
+}
+
+.row:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -1px;
+}
+
+.row-request {
+  grid-template-columns: 46px minmax(0, 1fr) 58px 62px;
+}
+
+.row-request .r-time {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-xs);
+}
+
+.row-request .r-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.row-request .r-model {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-request .r-key {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-request .r-tokens {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.row-request .r-cost {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--spend);
+  font-size: var(--fs-xs);
+}
+
+.row-request[data-status='error'] .r-cost {
+  color: var(--error);
+}
+
+.row-breakdown {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+}
+
+/* ---------- breakdown table (Models and Keys) ---------- */
+.breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.breakdown-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  padding: 0 8px 3px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.bh-tokens,
+.bh-cost {
+  text-align: right;
+  min-width: 62px;
+}
+
+/*
+ * Interval values are coloured from one place for every tab.
+ *
+ * Spending and Tokens paint their interval cell value from --tab-accent, so the
+ * tables must use the same source or the same interval reads as two different
+ * things on two tabs. Cost stays bright text because the accent is mid-tone and
+ * a spent dollar amount needs to read as primary, not as a label.
+ */
+.cell-value,
+.breakdown .r-tokens {
+  color: var(--tab-accent, var(--text-dim));
+}
+
+.breakdown .r-cost {
+  color: var(--text);
+}
+
+/* Right-aligned numeric columns, in the same place for both tables. */
+.breakdown .r-tokens,
+.breakdown .r-cost {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-sm);
+}
+
+/* ---------- log ---------- */
+
+.log-filters {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.filter-btn {
+  border: 1px solid var(--border);
+  background: var(--panel-raised);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  padding: 3px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.filter-btn:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.filter-btn[aria-pressed='true'] {
+  background: rgba(88, 166, 255, 0.18);
+  border-color: rgba(88, 166, 255, 0.4);
+  color: var(--text);
+}
+
+.filter-btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 60px;
+  border: 1px solid var(--border);
+  background: var(--panel-raised);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+
+.search-input:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: -1px;
+}
+
+.log-row {
+  display: grid;
+  grid-template-columns: 58px 42px 62px minmax(0, 1fr);
+  gap: 5px;
+  align-items: baseline;
+  padding: 3px 5px;
+  border-radius: 3px;
+  font-size: var(--fs-xs);
+  font-family: var(--mono);
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  min-width: 0;
+}
+
+.log-row:hover {
+  background: rgba(240, 246, 252, 0.05);
+}
+
+.log-row:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -1px;
+}
+
+.log-row[data-severity='error'] {
+  border-left-color: var(--error);
+}
+
+.log-row[data-severity='warn'] {
+  border-left-color: var(--warn);
+}
+
+.log-row[data-severity='info'] {
+  border-left-color: var(--info);
+}
+
+.log-row[data-severity='debug'] {
+  border-left-color: var(--debug);
+}
+
+.log-time {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.log-sev {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.log-sev[data-severity='error'] {
+  color: var(--error);
+}
+
+.log-sev[data-severity='warn'] {
+  color: var(--warn);
+}
+
+.log-sev[data-severity='info'] {
+  color: var(--info);
+}
+
+.log-sev[data-severity='debug'] {
+  color: var(--debug);
+}
+
+.log-source {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-msg {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.log-detail {
+  grid-column: 1 / -1;
+  padding: 4px 0 4px 8px;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-left: 1px solid var(--border-strong);
+  margin-left: 2px;
+}
+
+.log-detail code {
+  color: var(--accent);
+  font-family: var(--mono);
+}
+
+/* ---------- api tab ---------- */
+
+.scope-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.scope-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+  padding: 5px 7px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--panel-raised);
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  min-width: 0;
+}
+
+.scope-row:hover {
+  border-color: var(--border-strong);
+}
+
+/* The log used to be a tab; inside Settings it is a panel, so it scrolls. */
+.log-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.scope-row[aria-selected='true'] {
+  border-color: rgba(88, 166, 255, 0.5);
+  background: rgba(88, 166, 255, 0.12);
+}
+
+.scope-row:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.scope-radio {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-faint);
+  display: grid;
+  place-items: center;
+}
+
+.scope-row[aria-selected='true'] .scope-radio {
+  border-color: var(--accent);
+}
+
+.scope-row[aria-selected='true'] .scope-radio::after {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.scope-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scope-name .removed-tag {
+  font-size: 8px;
+  color: var(--text-faint);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  padding: 0 3px;
+  margin-left: 4px;
+}
+
+.scope-spend {
+  font-variant-numeric: tabular-nums;
+  color: var(--spend);
+  font-size: var(--fs-xs);
+}
+
+.scope-tokens {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+/* ---------- settings ---------- */
+
+.settings-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-raised);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+}
+
+.group-header:hover {
+  background: rgba(240, 246, 252, 0.04);
+}
+
+.group-header:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.group-chevron {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  fill: var(--text-faint);
+  transition: transform 150ms ease;
+}
+
+.group-header[aria-expanded='true'] .group-chevron {
+  transform: rotate(90deg);
+}
+
+.group-title {
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.group-summary {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.root[data-stacked-headers='true'] .group-header {
+  flex-wrap: wrap;
+}
+
+.root[data-stacked-headers='true'] .group-summary {
+  flex-basis: 100%;
+  text-align: left;
+  padding-left: 15px;
+}
+
+.group-body {
+  padding: 2px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.field-label {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A label with help text is interactive, so it needs a visible affordance. */
+.field-label.has-help {
+  cursor: help;
+}
+
+/* A small dot marks the label as having an explanation, which a dotted
+   underline at this font size does not communicate. */
+.field-label.has-help::after {
+  content: '';
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.55;
+  vertical-align: middle;
+}
+
+.field-label.has-help:hover::after,
+.field-label.has-help:focus-visible::after {
+  opacity: 1;
+}
+
+.field-label.has-help:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/*
+ * The popup is absolutely positioned inside the label and escapes the row, so
+ * it must not be clipped by the label's own overflow.
+ */
+.help-popup {
+  position: fixed;
+  z-index: 400;
+  width: max-content;
+  max-width: min(280px, calc(100vw - 32px));
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel-solid);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: break-word;
+  text-align: left;
+  text-decoration: none;
+  pointer-events: none;
+}
+
+.field-hint {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+
+.field-control {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+
+select,
+input[type='text'],
+input[type='password'],
+input[type='number'] {
+  border: 1px solid var(--border);
+  background: var(--panel-solid);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  padding: 3px 5px;
+  border-radius: 4px;
+  max-width: 130px;
+}
+
+/* The key field stands alone on its row, so it takes the full width instead of
+   the narrow cap used by inline setting inputs. */
+input.key-input {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 7px 8px;
+  margin: 6px 0 8px;
+}
+
+select:focus,
+input:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: -1px;
+}
+
+input[type='range'] {
+  width: 90px;
+  accent-color: var(--accent);
+}
+
+.toggle {
+  position: relative;
+  width: 28px;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--border-strong);
+  border: none;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: background 150ms ease;
+}
+
+.toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform 150ms ease;
+}
+
+.toggle[aria-checked='true'] {
+  background: var(--accent);
+}
+
+.toggle[aria-checked='true']::after {
+  transform: translateX(12px);
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.btn {
+  border: 1px solid var(--border-strong);
+  background: var(--panel-solid);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  padding: 4px 9px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  background: rgba(240, 246, 252, 0.08);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #04121f;
+  font-weight: 600;
+}
+
+.btn.primary:hover {
+  filter: brightness(1.1);
+}
+
+.btn.danger {
+  border-color: rgba(248, 113, 113, 0.5);
+  color: var(--error);
+}
+
+.btn.danger:hover {
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.instructions {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  line-height: 1.5;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.instructions li {
+  padding-left: 2px;
+}
+
+.instructions code {
+  font-family: var(--mono);
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.state-pill {
+  font-size: var(--fs-xs);
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.state-pill[data-state='connected'] {
+  color: var(--spend);
+  border-color: rgba(52, 211, 153, 0.4);
+  background: rgba(52, 211, 153, 0.1);
+}
+
+.state-pill[data-state='invalid'] {
+  color: var(--error);
+  border-color: rgba(248, 113, 113, 0.4);
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.state-pill[data-state='encryption_unavailable'] {
+  color: var(--warn);
+  border-color: rgba(251, 191, 36, 0.4);
+  background: rgba(251, 191, 36, 0.1);
+}
+
+.kv {
+  display: grid;
+  /* The label column is sized to its content with a floor, and the value column
+     takes the rest. An `auto` value column would grow to fit a long unbreakable
+     value such as a bucket id and collapse the labels to zero width. */
+  grid-template-columns: minmax(72px, max-content) minmax(0, 1fr);
+  gap: 4px 10px;
+  font-size: var(--fs-xs);
+  align-items: baseline;
+}
+
+.kv dt {
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.kv dd {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.warn-note {
+  font-size: var(--fs-xs);
+  color: var(--warn);
+  line-height: 1.4;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.25);
+}
+
+.error-note {
+  font-size: var(--fs-xs);
+  color: var(--error);
+  line-height: 1.4;
+}
+
+/* ---------- charts subview ---------- */
+
+.subview-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.back-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+
+.back-btn:hover {
+  background: rgba(88, 166, 255, 0.12);
+}
+
+.back-btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.subview-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.period-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.period-label {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.popover {
+  position: absolute;
+  z-index: 30;
+  top: 30px;
+  right: 8px;
+  width: 190px;
+  background: var(--panel-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.popover-title {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.segmented {
+  display: flex;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px;
+  background: var(--panel-raised);
+}
+
+.segmented button {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  padding: 3px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.segmented button[aria-pressed='true'] {
+  background: rgba(88, 166, 255, 0.2);
+  color: var(--text);
+}
+
+.segmented button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -1px;
+}
+
+/* ---------- granularity note ---------- */
+
+.granularity-note {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border-radius: var(--radius-sm);
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.22);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: var(--warn);
+}
+
+.root[data-mode='micro'] .granularity-note {
+  display: none;
+}
+
+/* ---------- source lag note ---------- */
+
+.lag-note {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border-radius: var(--radius-sm);
+  background: rgba(96, 165, 250, 0.08);
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: var(--info);
+}
+
+.root[data-mode='micro'] .lag-note {
+  display: none;
+}
+
+/* ---------- connect prompt ---------- */
+
+.connect-prompt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 7px;
+  border-radius: var(--radius-sm);
+  background: rgba(96, 165, 250, 0.1);
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  font-size: var(--fs-xs);
+  color: var(--info);
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.connect-prompt span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connect-prompt .btn {
+  padding: 2px 7px;
+  font-size: var(--fs-xs);
+}
+
+.root[data-mode='micro'] .connect-prompt {
+  display: none;
+}
+
+/* ---------- empty / error states ---------- */
+
+.empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  padding: 12px;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.empty .empty-title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ---------- resize handle ---------- */
+
+.resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  -webkit-app-region: no-drag;
+  z-index: 40;
+}
+
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--text-faint);
+  border-bottom: 1.5px solid var(--text-faint);
+  border-radius: 0 0 2px 0;
+  opacity: 0.6;
+}
+
+.root[data-mode='micro'] .resize-handle {
+  width: 10px;
+  height: 10px;
+}
+
+.size-readout {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 50;
+  background: var(--panel-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+/* ---------- reduced motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+:root[data-animations='off'] * {
+  animation: none !important;
+  transition: none !important;
+}
+
+/* ---------- micro mode ---------- */
+
+.root[data-mode='micro'] .view {
+  padding: 5px 6px;
+  gap: 3px;
+}
+
+.root[data-mode='micro'] .chart-wrap {
+  display: none;
+}
+
+.root[data-mode='micro'] .metrics {
+  gap: 4px;
+}
+
+.root[data-mode='micro'] .metric-sub {
+  display: none;
+}
+
+.root[data-mode='compact'] .chart-wrap {
+  min-height: 30px;
+}
+
+.breakdown-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  flex: 0 0 auto;
+}
+
+/* The base .row is a grid, so the breakdown keeps that and only sets columns. */
+.row-breakdown {
+  grid-template-columns: minmax(0, 1fr) 62px 68px;
+  align-items: center;
+}
+
+.row-breakdown .r-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.row-breakdown .r-model {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-breakdown .r-key {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spend-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.root[data-mode='expanded'] .breakdown-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  flex: 0 0 auto;
+}
+
+/* The base .row is a grid, so the breakdown keeps that and only sets columns. */
+.row-breakdown {
+  grid-template-columns: minmax(0, 1fr) 62px 68px;
+  align-items: center;
+}
+
+.row-breakdown .r-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.row-breakdown .r-model {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-breakdown .r-key {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.root[data-mode='expanded'] .chart-wrap {
+  min-height: 120px;
+}
+
+.root[data-mode='compact'] .chart-wrap {
+  min-height: 34px;
+}
+
+/* Standard stacks: metrics on top, chart full width below. A side-by-side
+   split leaves the chart too narrow to read at this width. */
+/* ---------- utility ---------- */
+
+[hidden] {
+  display: none !important;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.mono {
+  font-family: var(--mono);
+}
+
+.dim {
+  color: var(--text-faint);
+}
+
+.spacer {
+  flex: 1;
+}

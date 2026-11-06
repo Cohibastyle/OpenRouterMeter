@@ -1,0 +1,43 @@
+{
+  "name": "openrouter-desktop-widget",
+  "productName": "OpenRouter Meter",
+  "version": "0.1.0",
+  "description": "Always-on-top desktop widget for OpenRouter spending and token usage",
+  "author": "Cohibastyle",
+  "private": true,
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs && electron .",
+    "start": "node scripts/build.mjs && electron .",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/test.mjs",
+    "selftest": "node scripts/build.mjs && electron . --selftest",
+    "dist:mac": "node scripts/build.mjs && electron-builder --mac",
+    "capture": "node scripts/build.mjs && electron . --capture",
+    "setup:electron": "node scripts/setup-electron.mjs"
+  },
+  "devDependencies": {
+    "electron": "^38.0.0",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  },
+  "build": {
+    "appId": "ai.openrouter.widget",
+    "productName": "OpenRouter Meter",
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg"
+      ],
+      "extendInfo": {
+        "LSUIElement": 1
+      }
+    }
+  }
+}
