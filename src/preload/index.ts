@@ -70,6 +70,8 @@ const api: WidgetApi = {
     setState: (patch: Partial<WindowState>): Promise<WindowState & { layout: LayoutInfo }> =>
       ipcRenderer.invoke('window:setState', patch),
     minimize: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
+    moveBy: (delta: { dx: number; dy: number }): Promise<WindowState['bounds'] | null> =>
+      ipcRenderer.invoke('window:moveBy', delta),
     hide: (): Promise<void> => ipcRenderer.invoke('window:hide'),
     close: (): Promise<void> => ipcRenderer.invoke('window:close'),
     resetSize: (): Promise<WindowState['bounds'] | null> => ipcRenderer.invoke('window:resetSize'),

@@ -1,4 +1,4 @@
-import { formatCount, formatSpendCompact, formatTokensCompact } from '../../shared/format.js';
+import { formatCount, formatMetricValue } from '../../shared/format.js';
 import type { StripDetail } from '../../shared/layout.js';
 import type { Metric, WindowCell } from '../../shared/types.js';
 import { clear, el } from './dom.js';
@@ -47,14 +47,10 @@ export class SummaryStrip {
 
   private renderCell(cell: WindowCell): HTMLButtonElement {
     const unavailable = cell.coverage === 'unavailable';
-    const value =
-      this.options.metric === 'spend'
-        ? unavailable
-          ? '\u2013'
-          : formatSpendCompact(cell.spend_micro)
-        : unavailable
-          ? '\u2013'
-          : formatTokensCompact(cell.total_tokens);
+    // Both metrics use the same digit budget, so a token total and a spend
+    // total of the same relative size read to the same precision.
+    const raw = this.options.metric === 'spend' ? cell.spend_micro : cell.total_tokens;
+    const value = unavailable ? '\u2013' : formatMetricValue(this.options.metric, raw);
 
     const selected = this.options.selectedKey === cell.key;
     const button = el('button', {
@@ -67,12 +63,24 @@ export class SummaryStrip {
       title: this.tooltip(cell),
     });
 
-    button.appendChild(el('span', { class: 'cell-label', text: cell.label }));
+    // The interval is always drawn: it is the cell's identity and the range
+    // button, so a narrow window degrades to a row of range buttons rather than
+    // a row of truncated numbers.
+    //
+    // The request count joins the interval on the top row, right-aligned, as
+    // soon as the cell is wide enough to hold both without clipping. The value
+    // always sits on its own second row, so the strip reads the same way at
+    // every width: interval on top, figure below.
+    const top = el('div', { class: 'cell-top' });
+    top.appendChild(el('span', { class: 'cell-label', text: cell.label }));
 
-    // The value and the request count are added only when the cell is wide
-    // enough to draw them without clipping. The label is always drawn: it is
-    // the cell's identity and the range button, so a narrow window degrades to
-    // a row of range buttons rather than a row of truncated numbers.
+    if (this.options.detail === 'full' && cell.request_count !== null) {
+      top.appendChild(
+        el('span', { class: 'cell-sub', text: `${formatCount(cell.request_count)} req` }),
+      );
+    }
+    button.appendChild(top);
+
     if (this.options.detail !== 'label') {
       button.appendChild(
         el('span', {
@@ -80,12 +88,6 @@ export class SummaryStrip {
           'data-metric': this.options.metric,
           text: value,
         }),
-      );
-    }
-
-    if (this.options.detail === 'full' && cell.request_count !== null) {
-      button.appendChild(
-        el('span', { class: 'cell-sub', text: `${formatCount(cell.request_count)} req` }),
       );
     }
 
@@ -114,8 +116,8 @@ export class SummaryStrip {
     if (cell.coverage === 'unavailable') {
       lines.push(REASON_LABEL[cell.partial_reason ?? 'no_data'] ?? 'Not computable');
     } else {
-      lines.push(`Spend ${formatSpendCompact(cell.spend_micro)}`);
-      lines.push(`Tokens ${formatTokensCompact(cell.total_tokens)}`);
+      lines.push(`Spend ${formatMetricValue('spend', cell.spend_micro)}`);
+      lines.push(`Tokens ${formatMetricValue('tokens', cell.total_tokens)}`);
       if (cell.request_count !== null) lines.push(`${formatCount(cell.request_count)} requests`);
       if (cell.coverage === 'partial') {
         lines.push(REASON_LABEL[cell.partial_reason ?? 'no_data'] ?? 'Partial coverage');

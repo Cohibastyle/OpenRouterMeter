@@ -20,11 +20,11 @@ import type {
 import {
   DASH,
   formatAgeSince,
+  formatMetricValue,
   formatClock,
   formatCount,
   formatDateTime,
   formatSpend,
-  formatSpendCompact,
   formatTokensCompact,
   formatTokensExact,
 } from '../shared/format.js';
@@ -107,6 +107,8 @@ interface AppState {
   displayed: Record<Metric, number | null>;
   /** Most recent rise per metric, shown beside the headline. */
   increases: Record<Metric, Increase | null>;
+  /** Scroll offset of the Settings pane, restored after it is rebuilt. */
+  settingsScroll: number;
 }
 
 const state: AppState = {
@@ -150,6 +152,7 @@ const state: AppState = {
   headline: null,
   displayed: { spend: null, tokens: null },
   increases: { spend: null, tokens: null },
+  settingsScroll: 0,
 };
 
 let chartRenderer: ChartRenderer | null = null;
@@ -260,6 +263,9 @@ function applyLayout(): void {
   root.dataset.iconRail = String(layout.iconRail);
   root.dataset.stackedHeaders = String(layout.stackedHeaders);
   root.dataset.showChart = String(layout.showChart);
+  // The status bar is the drag handle, so the lock setting suppresses it here
+  // rather than only in the scripted drag handler.
+  root.dataset.locked = String(state.settings?.display.locked ?? false);
 }
 
 async function refreshLayout(): Promise<void> {
@@ -320,6 +326,109 @@ function wireChrome(): void {
 
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+  });
+
+  wireDrag();
+}
+
+/**
+ * Move the window from the status bar.
+ *
+ * The CSS `-webkit-app-region: drag` declaration stays in place as the
+ * platform-correct way to do this, but it does not start a move on a
+ * non-opaque window whose shell paints a `backdrop-filter`: the region is
+ * present and hit-testable, and a press on it still does nothing. So the drag
+ * is also driven from script, applying the pointer delta to the window through
+ * the main process.
+ *
+ * The two must not both run. If the native region works the window follows the
+ * press on its own and the script would move it a second time by the same
+ * delta, so the handler only starts once the press has been held for a moment
+ * without the window moving. A working native drag moves the window on the
+ * first pointer moves, which cancels the scripted drag before it begins.
+ */
+const DRAG_ARM_MS = 90;
+
+function wireDrag(): void {
+  const bar = document.getElementById('statusbar');
+  const region = document.getElementById('drag-region');
+  if (!bar || !region) return;
+
+  /** Origin the window had when the press began. */
+  let startWindowX = 0;
+  let startWindowY = 0;
+  /** Where the pointer was on the previous move. */
+  let lastX = 0;
+  let lastY = 0;
+  /**
+   * Whether the script has taken over the press. Until it has, a change in the
+   * window origin means the platform is moving the window natively.
+   */
+  let scripted = false;
+  let armTimer = 0;
+
+  const end = () => {
+    if (armTimer) window.clearTimeout(armTimer);
+    armTimer = 0;
+    scripted = false;
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', end);
+    window.removeEventListener('pointercancel', end);
+    bar.classList.remove('is-dragging');
+  };
+
+  const onMove = (event: PointerEvent) => {
+    if (!scripted) {
+      // The native region moved the window, so this press is already handled.
+      if (window.screenX !== startWindowX || window.screenY !== startWindowY) end();
+      return;
+    }
+    const dx = Math.round(event.screenX - lastX);
+    const dy = Math.round(event.screenY - lastY);
+    if (dx === 0 && dy === 0) return;
+    lastX = event.screenX;
+    lastY = event.screenY;
+    void api.window.moveBy({ dx, dy });
+  };
+
+  region.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    if (state.settings?.display.locked) return;
+    const target = event.target as HTMLElement | null;
+    // Controls inside the bar keep their own clicks.
+    if (target?.closest('.window-controls')) return;
+
+    lastX = event.screenX;
+    lastY = event.screenY;
+    startWindowX = window.screenX;
+    startWindowY = window.screenY;
+
+    // Capture so the move events keep arriving once the script starts moving the
+    // window out from under the pointer.
+    try {
+      region.setPointerCapture(event.pointerId);
+    } catch {
+      // Capture is best-effort; window-level listeners still work without it.
+    }
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+
+    // Give a working native region the first chance: if the window has not
+    // moved once the press has had time to register, drive it from script.
+    if (armTimer) window.clearTimeout(armTimer);
+    armTimer = window.setTimeout(() => {
+      armTimer = 0;
+      if (window.screenX !== startWindowX || window.screenY !== startWindowY) {
+        end();
+        return;
+      }
+      // The script owns the press from here, so later origin changes are its
+      // own doing and must not be read as a native drag.
+      scripted = true;
+      bar.classList.add('is-dragging');
+    }, DRAG_ARM_MS);
   });
 }
 
@@ -708,31 +817,12 @@ function renderInlineChart(metric: Metric): HTMLElement {
     }),
   );
 
-  const axisSeg = el('div', { class: 'segmented segmented-sm', role: 'group', 'aria-label': 'X axis scale' });
-  for (const option of [
-    { value: 'log', label: 'Log' },
-    { value: 'linear', label: 'Linear' },
-  ] as const) {
-    const button = el('button', {
-      type: 'button',
-      'aria-pressed': String((state.settings?.display.chart_axis ?? 'log') === option.value),
-      text: option.label,
-    });
-    button.addEventListener('click', () => {
-      void patchSettings({ display: { chart_axis: option.value } }).then(() => {
-        void loadChart().then(() => render());
-      });
-    });
-    axisSeg.appendChild(button);
-  }
-  header.appendChild(axisSeg);
   wrap.appendChild(header);
 
   const chartWrap = el('div', { class: 'chart-wrap' });
   wrap.appendChild(chartWrap);
 
-  const axis = state.settings?.display.chart_axis ?? 'log';
-  chartRenderer = new ChartRenderer(chartWrap, { axis, metric });
+  chartRenderer = new ChartRenderer(chartWrap, { metric });
   if (state.chartData && state.chartData.metric === metric && state.chartData.scale === state.chartScale) {
     chartRenderer.setData(state.chartData);
   } else {
@@ -972,7 +1062,8 @@ function paintHeadline(
   target: number | null,
   pending: boolean,
 ): void {
-  const format = metric === 'spend' ? formatSpend : formatTokensCompact;
+  // The headline uses the display budget, matching the interval cells above it.
+  const format = (v: number) => formatMetricValue(metric, v);
   const previous = state.displayed[metric];
 
   if (pending || target === null) {
@@ -1006,8 +1097,7 @@ function renderIncreaseChip(metric: Metric): HTMLElement | null {
     return null;
   }
 
-  const amount =
-    metric === 'spend' ? formatSpend(increase.amount) : formatTokensCompact(increase.amount);
+  const amount = formatMetricValue(metric, increase.amount);
   // A rise with no new requests means the rolling window slid rather than new
   // usage arriving, so there is no count worth stating.
   const requests =
@@ -1261,24 +1351,26 @@ function renderBreakdownList(rows: BreakdownRow[], kind: 'model' | 'key'): HTMLE
   }
 
   for (const row of rows) {
+    // A row with no buckets is a known key that reported nothing in the
+    // interval, which reads differently from a key that spent zero.
+    const detail =
+      row.bucket_count === 0
+        ? 'no usage in this interval'
+        : `${formatCount(row.bucket_count)} bucket${row.bucket_count === 1 ? '' : 's'}`;
     const item = el('div', {
       class: 'row row-breakdown',
       role: 'listitem',
-      title: `${row.label} \u00b7 ${row.bucket_count} reporting bucket${row.bucket_count === 1 ? '' : 's'}`,
+      title: `${row.label} \u00b7 ${detail}`,
+      'data-idle': String(row.bucket_count === 0),
     });
     const main = el('div', { class: 'r-main' });
     main.appendChild(el('span', { class: 'r-model', text: row.label }));
-    main.appendChild(
-      el('span', {
-        class: 'r-key',
-        text: `${formatCount(row.bucket_count)} bucket${row.bucket_count === 1 ? '' : 's'}`,
-      }),
-    );
+    main.appendChild(el('span', { class: 'r-key', text: detail }));
     item.appendChild(main);
     item.appendChild(
       el('span', {
         class: 'r-tokens',
-        text: row.total_tokens === null ? DASH : formatTokensCompact(row.total_tokens),
+        text: row.total_tokens === null ? DASH : formatMetricValue('tokens', row.total_tokens),
       }),
     );
     item.appendChild(
@@ -1445,6 +1537,41 @@ function renderLogPanel(): HTMLElement {
 /* ------------------------------- api ------------------------------ */
 
 /**
+ * Keys are a known set, so the table lists every key rather than only the ones
+ * that happened to report usage in the interval.
+ *
+ * The breakdown is built from usage rows, which means a key that spent nothing
+ * in the window has no row and would silently disappear from a table that is
+ * meant to describe the account. Known keys with no row are added with a null
+ * spend, rendered as a dash so "no usage" is never confused with "zero spend".
+ */
+function mergeKeysIntoRows(
+  rows: BreakdownRow[],
+  keys: ReadonlyArray<{ id: string; name: string; removed: boolean }>,
+): BreakdownRow[] {
+  const seen = new Set(rows.map((row) => row.id));
+  const extra: BreakdownRow[] = [];
+  for (const key of keys) {
+    const id = `key:${key.id}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    extra.push({
+      id,
+      label: key.removed ? `${key.name} (removed)` : key.name,
+      spend_micro: null,
+      input_tokens: null,
+      output_tokens: null,
+      total_tokens: null,
+      bucket_count: 0,
+      latest: null,
+    });
+  }
+  // Rows with usage stay in spend order; the no-usage keys follow, by name.
+  extra.sort((a, b) => a.label.localeCompare(b.label));
+  return [...rows, ...extra];
+}
+
+/**
  * The Keys tab: the same table as Models, grouped by API key.
  *
  * It is a report, not a picker. The scope control that used to live here moved
@@ -1473,7 +1600,7 @@ function renderApi(): void {
     return;
   }
 
-  view.appendChild(renderBreakdownList(breakdown.rows, 'key'));
+  view.appendChild(renderBreakdownList(mergeKeysIntoRows(breakdown.rows, state.keys), 'key'));
 
   const note = el('div', { class: 'lag-note' });
   note.appendChild(
@@ -1620,6 +1747,42 @@ function renderSettings(): void {
   );
 
   content.appendChild(view);
+
+  // Track the offset as it changes, so a rebuild triggered from anywhere (a
+  // settings patch, the log tail arriving) resumes at the reader's position and
+  // not at whatever the last group-header click happened to record.
+  view.addEventListener('scroll', () => {
+    if (state.tab === 'settings') state.settingsScroll = view.scrollTop;
+  }, { passive: true });
+
+  // The pane is rebuilt from scratch on every settings change, which resets its
+  // scroll offset. Put it back where it was so expanding a group does not throw
+  // the reader to the top of a long list.
+  restoreSettingsScroll(view);
+}
+
+/**
+ * Remember where the Settings pane is scrolled to.
+ *
+ * Called before a rebuild, because the element that holds the offset is
+ * replaced by the render.
+ */
+function rememberSettingsScroll(): void {
+  if (state.tab !== 'settings') return;
+  const pane = content.querySelector<HTMLElement>('.view.scroll');
+  if (pane) state.settingsScroll = pane.scrollTop;
+}
+
+/** Apply the remembered offset once the rebuilt pane is in the document. */
+function restoreSettingsScroll(view: HTMLElement): void {
+  const target = Math.max(0, state.settingsScroll);
+  if (target === 0) return;
+  const apply = () => {
+    if (!view.isConnected) return;
+    view.scrollTop = Math.min(target, view.scrollHeight - view.clientHeight);
+  };
+  // The scroll height is only known after layout, so defer one frame.
+  requestAnimationFrame(apply);
 }
 
 function settingsGroup(
@@ -1645,6 +1808,10 @@ function settingsGroup(
   header.addEventListener('click', () => {
     if (state.expandedGroups.has(id)) state.expandedGroups.delete(id);
     else state.expandedGroups.add(id);
+    // The click may come from a re-render that replaced the element, so the
+    // scroll position of the settings pane is captured now rather than after
+    // the rebuild, when the old element is already gone.
+    rememberSettingsScroll();
     render();
   });
 
@@ -1767,6 +1934,7 @@ async function patchSettings(patch: unknown): Promise<void> {
     state.notice = null;
   }
   applyTheme();
+  applyLayout();
   render();
 }
 
@@ -2002,33 +2170,21 @@ function renderDisplay(settings: Settings): HTMLElement {
       ),
     ),
   );
-  wrap.appendChild(
-    field(
-      'Chart time axis',
-      selectControl(
-        settings.display.chart_axis,
-        [
-          { value: 'log', label: 'Logarithmic' },
-          { value: 'linear', label: 'Linear' },
-        ],
-        (value) => void patchSettings({ display: { chart_axis: value } }),
-      ),
-    ),
-  );
-  if (settings.display.chart_axis === 'linear') {
-    wrap.appendChild(
-      el('div', {
-        class: 'warn-note',
-        text: 'Linear is an accessibility override. Every chart shows a persistent "Linear axis" label.',
-      }),
-    );
-  }
-
   const preview = el('div', { class: 'kv' });
+  // The preview shows the same formatter the strip and headline use, so it
+  // cannot drift from what the widget actually displays.
   preview.appendChild(el('dt', { text: 'Spend preview' }));
-  preview.appendChild(el('dd', { text: `${formatSpend(1234)} \u00b7 ${formatSpend(4321)}` }));
+  preview.appendChild(
+    el('dd', {
+      text: `${formatMetricValue('spend', 64800)} \u00b7 ${formatMetricValue('spend', 1234567)}`,
+    }),
+  );
   preview.appendChild(el('dt', { text: 'Token preview' }));
-  preview.appendChild(el('dd', { text: `${formatTokensCompact(148200)} \u00b7 ${formatTokensCompact(1240000)}` }));
+  preview.appendChild(
+    el('dd', {
+      text: `${formatMetricValue('tokens', 148200)} \u00b7 ${formatMetricValue('tokens', 1240000)}`,
+    }),
+  );
   wrap.appendChild(preview);
 
   const resetSize = el('button', { class: 'btn', type: 'button', text: 'Reset size to 320 \u00d7 240' });
@@ -2350,7 +2506,8 @@ function renderCharts(): void {
   const total =
     state.chartMetric === 'spend'
       ? formatSpend(state.chartData?.total_spend_micro ?? null)
-      : formatTokensCompact(
+      : formatMetricValue(
+          'tokens',
           (state.chartData?.total_input_tokens ?? 0) + (state.chartData?.total_output_tokens ?? 0),
         );
   title.textContent = `${state.chartMetric === 'spend' ? 'Spend' : 'Tokens'} \u00b7 ${total}`;
@@ -2395,8 +2552,7 @@ function renderCharts(): void {
   const chartWrap = el('div', { class: 'chart-wrap' });
   view.appendChild(chartWrap);
 
-  const axis = state.settings?.display.chart_axis ?? 'log';
-  chartRenderer = new ChartRenderer(chartWrap, { axis, metric: state.chartMetric });
+  chartRenderer = new ChartRenderer(chartWrap, { metric: state.chartMetric });
   if (state.chartData) chartRenderer.setData(state.chartData);
 
   if (state.chartOptionsOpen) {

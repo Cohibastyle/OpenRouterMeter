@@ -199,7 +199,7 @@ Derived layout modes:
 - No horizontal scrolling at any size. No element may overflow its container.
 - Text truncates with an ellipsis and exposes the full value through a tooltip or a detail view. Values never wrap mid-number.
 - Numeric values use tabular figures so they do not jitter while resizing or updating.
-- Charts re-render from a resize observer with debouncing, and reduce axis label count as width shrinks. Below the S width class, show a sparkline with no axis labels. The sparkline still uses the logarithmic time mapping from section 10.12.1.
+- Charts re-render from a resize observer with debouncing, and reduce axis label count as width shrinks. Below the S width class, show a sparkline with no axis labels. The sparkline still uses the time mapping from section 10.12.1.
 - The tab bar shows labels at M width and above and becomes an icon rail below M width, at every size down to the minimum. It never collapses to a pager: all five tabs stay reachable at every size.
 - Cards reflow from a row to a column as width decreases, and hide secondary metrics before primary ones.
 - Hide, do not shrink below legibility: when space runs out, drop the least important element rather than rendering 8 pixel text. The chart is the first casualty in Standard mode: below 280px of window height it is dropped rather than compressed, because the strip, the headline, and any source note have already taken the room and a shorter plot would clip its own X-axis labels against the tab bar. The chart's value axis sheds grid lines as the plot shortens, so a small chart keeps readable labels instead of overlapping ones.
@@ -254,7 +254,7 @@ Default display zone: the operating system zone, with an explicit override. Stor
 - Use real calendar boundaries, not fixed 24 hour assumptions in zones with clock changes.
 - If source data is daily UTC only, do not claim exact local hourly or local daily totals from it.
 - Report the earliest reliable history date and gaps.
-- Period selection is independent of the chart axis. The logarithmic axis in section 10.12.1 changes only where a bin is drawn, never which bins exist or what they total.
+- Period selection is independent of the chart axis. The axis mapping in section 10.12.1 changes only where a bin is drawn, never which bins exist or what they total.
 
 Persist data in the local database. Raw request retention defaults to 90 days and is configurable. Keep aggregate history for at least 24 months when available. Label partial coverage if retention or missing imports limit a chart.
 
@@ -544,7 +544,6 @@ Collection and accounting parameters.
 - Default metric per tab: Spend or Tokens for Spending, Requests, and API.
 - Micro mode window: which rolling window the single Micro cell shows. Default `1h`.
 - Animations: on, reduced, or off. Default follows the OS reduced-motion setting.
-- Chart time axis: Logarithmic (default) or Linear. Linear is an accessibility override and shows a persistent `Linear axis` label on every chart.
 - Number format preview: a live sample row showing how spend and token values will render.
 - Reset size to the default 320 x 240.
 
@@ -612,7 +611,7 @@ Avoid putting every control on one crowded view. Use a chart view plus a small o
 Chart view:
 
 - Selected metric and total.
-- Chart with sparse axis labels on the logarithmic time axis from section 10.12.1.
+- Chart with sparse axis labels on the time axis from section 10.12.1.
 - Current period label and previous/next controls.
 - Options button.
 
@@ -627,59 +626,59 @@ Spend uses bars. Tokens use stacked input and output bars. A click on a bar show
 
 Use a visible gap for missing data. Only draw zero when the source confirms zero usage. Mark a current incomplete bin distinctly.
 
-#### 10.12.1 Logarithmic time axis
+#### 10.12.1 Time axis
 
-Every graph in the widget uses a logarithmic X axis. This includes the full Charts view, the compact trend on the Spending tab, and the Micro mode sparkline. The Y axis stays linear. Only the time axis is logarithmic.
+Every graph in the widget uses a linear time axis. This includes the full Charts
+view, the compact trend on the Spending tab, and the Micro mode sparkline. The Y
+axis is linear too.
 
-The purpose is that recent data occupies most of the width and older data compresses toward the left, so a single view can show the last ten minutes and the last year without the recent detail collapsing into one pixel.
-
-The axis is a rendering choice only. It does not change the period selection in section 9, the bin boundaries, or the totals. The same bins are drawn, at different horizontal positions.
+An earlier revision specified a logarithmic time axis with a linear override. It
+was removed because the compression made a bucket's width depend on its age rather
+than on its duration, which reads as a data property rather than a rendering
+choice: two equal spends looked different depending on how old they were. Every
+bucket now gets a width proportional to the time it covers.
 
 **Mapping**
 
-Let `t_end` be the right edge of the chart, `t_start` the left edge, and `a(t) = t_end - t` the age of a point relative to the right edge.
+Let `t_end` be the right edge of the chart and `t_start` the left edge.
 
 - `t_end` is the current time for the current period, and the period end for a past period. It is never in the future.
-- `a_min` is the finest bin width in the view, floored at one second.
-- `a_max = t_end - t_start`.
-- Horizontal position: `x(t) = 1 - (log(a) - log(a_min)) / (log(a_max) - log(a_min))`, clamped to `[0, 1]`.
+- Horizontal position: `x(t) = (t - t_start) / (t_end - t_start)`, clamped to `[0, 1]`.
 - The newest point sits at the right edge. The oldest sits at the left edge.
-- Use `log10`. The base only changes the tick labels, not the shape.
 
 **Bins and bars**
 
-- Each bin is drawn across its own log extent, from `x(bin_end)` to `x(bin_start)`. Bar widths therefore shrink toward the left, which is the intended compression.
+- Each bin is drawn across its own extent, from `x(bin_start)` to `x(bin_end)`, so every bin of the same width is drawn the same width.
 - Enforce a minimum rendered bar width of 1 device pixel so a bin never vanishes entirely.
-- Enforce a minimum hit target of 8 logical pixels per bin. Hit testing uses the log mapping, and when several bins fall inside the hit target, the nearest bin by log distance wins.
+- Enforce a minimum hit target of 8 logical pixels per bin. When several bins fall inside the hit target, the nearest bin by time distance wins.
 - Bins are never reordered, merged, or dropped to fit the axis. The axis adapts to the bins.
-- A gap in data keeps its true log width. Do not collapse a gap to zero width.
+- A gap in data keeps its true width. Do not collapse a gap to zero width.
 - The current partial bin is drawn at the right edge with its partial marker, and its width reflects only the elapsed part of the bin.
 
 **Grid lines and ticks**
 
-- Vertical grid lines are placed at log positions, so their spacing compresses toward the left exactly as the data does.
-- Major grid lines at decade boundaries of age: 1 s, 10 s, 1 min, 10 min, 1 h, 10 h, 1 d, 10 d, 100 d.
-- Minor grid lines at the 2x and 5x positions inside each decade: 2 s, 5 s, 20 s, 50 s, 2 min, 5 min, and so on.
-- Where the range is dominated by calendar units, prefer calendar-natural ticks over strict decades: 1 m, 5 m, 15 m, 30 m, 1 h, 3 h, 6 h, 12 h, 1 d, 2 d, 1 w, 2 w, 1 mo, 3 mo, 6 mo, 1 y.
-- Choose the tick set whose smallest log spacing still leaves at least 48 logical pixels between labels. Drop minor ticks before major ticks as width shrinks.
-- Major grid lines are one step brighter than minor lines. Both stay below the data in contrast.
-- Axis labels are relative ages, such as `5m`, `3h`, `2d`, `6mo`, because absolute clock times are hard to read on a compressed axis. The exact absolute time appears in the tooltip and in the bin detail.
+- Vertical grid lines are evenly spaced in time, so their spacing is uniform across the plot.
+- Tick intervals are chosen from round time units so a label falls on a readable boundary. The count is reduced as width shrinks so labels never collide.
+- Axis labels are relative ages, such as `5m`, `3h`, `2d`, `6mo`, because absolute clock times are hard to scan.
 - The rightmost label is always `now` for the current period, or the period end label for a past period.
+
+**Value axis**
+
+- The value axis allows at most four significant digits and never resolves spend below $0.001.
+- Larger values use K, M and B suffixes in decimal notation rather than gaining digits, so a label stays short as the amount grows.
+- The left gutter is measured from the widest label rather than fixed, so the leftmost digits are never truncated.
+- Tick steps are snapped up to the next 1-2-5 value, so a step is never finer than the precision floor.
 
 **Interaction**
 
-- Hover and click resolve to a bin through the log mapping, never through a linear approximation.
+- Hover and click resolve to a bin through the linear mapping.
 - The crosshair follows the pointer and snaps to the nearest bin center.
-- The previous and next bin controls step through bins in time order, which is the reliable way to reach a sliver at the left edge.
-- Zooming, if added later, must zoom in log space so the visual compression is preserved.
+- The previous and next bin controls step through bins in time order, which is the reliable way to reach a narrow bin.
 
 **Edge cases**
 
-- A range shorter than one decade still uses the log mapping. Do not silently fall back to linear.
-- A single bin, or a range where `a_max` equals `a_min`, renders as one full-width bar with the axis label `now`.
-- A range that would place `a_min` at zero is clamped to one second.
+- A single bin, or a range where `t_start` equals `t_end`, renders as one full-width bar with the axis label `now`.
 - If the source granularity is coarser than the bin width, the affected bins are marked unavailable per section 10.5 and are not drawn as zero.
-- A linear axis is available only as an accessibility override in Settings, Display options, and it is off by default. When enabled, the chart shows a persistent `Linear axis` label so a screenshot can never be mistaken for the default view.
 
 ### 10.13 New request animation
 
@@ -734,7 +733,6 @@ If several requests arrive, show the newest and a small count such as 5 new. Do 
 - The OS reduced-motion setting disables the new request transition by default.
 - The OS text scale setting is respected up to 200 percent without clipping.
 - Screen reader announcements are limited to the latest request change and to error state changes, so the widget does not chatter.
-- The linear axis override in section 10.12.1 exists for users who cannot read a compressed axis.
 
 ## 11. Credentials and security
 
@@ -936,21 +934,18 @@ Section 11 defines credential storage and application hardening. This section st
 
 ### Chart time axis
 
-- Every graph uses a logarithmic time axis: the full Charts view, the Spending tab trend, and the Micro mode sparkline.
+- Every graph uses a linear time axis: the full Charts view, the Spending tab trend, and the Micro mode sparkline.
 - The newest point renders at the right edge and the oldest at the left edge for a fixed clock.
-- A point at half the age of another renders at the expected log position, verified against a computed table of positions.
-- Bar widths shrink monotonically from right to left, and no bar renders narrower than one device pixel.
-- Vertical grid lines compress toward the left and never appear at uniform spacing.
-- Major ticks land on decade boundaries and minor ticks on the 2x and 5x positions, or on the calendar-natural set when that set is selected.
-- Labels are dropped from minor to major as width shrinks, and no two labels overlap at any size class.
+- Buckets of equal duration render at equal width, and no bar renders narrower than one device pixel.
+- Vertical grid lines are evenly spaced and land on round time boundaries.
+- Labels are thinned as width shrinks, and no two labels overlap at any size class.
 - The rightmost label reads `now` for the current period and the period end label for a past period.
-- A gap in data keeps its true log width and is not collapsed.
+- A gap in data keeps its true width and is not collapsed.
 - The current partial bin is drawn at the right edge with its partial marker and only its elapsed width.
 - Hover and click resolve to the correct bin at the left edge, the middle, and the right edge.
 - The previous and next bin controls reach a bin that is too narrow to click.
-- A range shorter than one decade still uses the log mapping and does not fall back to linear.
 - A single-bin range renders as one full-width bar labeled `now`.
-- Enabling the linear override shows the persistent `Linear axis` label on every chart, and disabling it restores the log axis.
+- The value axis never shows more than four significant digits and never resolves spend below $0.001, and its leftmost label is never truncated.
 
 ### Charts and animation
 
@@ -1012,7 +1007,7 @@ Build the frameless always-on-top window, tray, global shortcuts, persistence, a
 
 ### Phase 2: Display
 
-Build the five tabs and the rolling window summary strip from section 10 against fixtures, including every coverage and empty state. Build the chart renderer with the logarithmic time axis from section 10.12.1, including log grid lines, tick thinning, and log hit testing. Build the Log group with a fixture event stream and the Settings tab with all eight groups wired to a local settings store. Add the new request animation and the accessibility pass.
+Build the five tabs and the rolling window summary strip from section 10 against fixtures, including every coverage and empty state. Build the chart renderer with the linear time axis from section 10.12.1, including grid lines, tick thinning, and hit testing. Build the Log group with a fixture event stream and the Settings tab with all eight groups wired to a local settings store. Add the new request animation and the accessibility pass.
 
 ### Phase 3: Local store and settings
 
@@ -1064,7 +1059,7 @@ The release is done when all of the following hold.
 
 - The Spending, Requests, Log, API, and Settings tabs all work.
 - The rolling 10 minute, 1 hour, 3 hour, 6 hour, and 24 hour summaries are correct and honest about coverage.
-- Every graph uses the logarithmic time axis, with compressed grid lines and correct log hit testing.
+- Every graph uses the linear time axis, with evenly spaced grid lines and correct hit testing.
 - The latest request shows its key name, model, timestamp, tokens, and cost, and a new request triggers exactly one transition.
 
 **Data**

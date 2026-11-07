@@ -79,6 +79,27 @@ test('a fall is not rolled, and neither is a shape change', () => {
   assert.equal(planRoll('$148.2K', '$1.24M', WINDOW), null);
   assert.equal(planRoll('$4.123', '$6.456', 0), null);
 });
+test('an increase too small to change the text is not animated', () => {
+  // A rise that lands inside the displayed precision must not start a roll: the
+  // formatter gives both values the same string, so there is nothing to travel
+  // and the number would otherwise flash for no reason.
+  assert.equal(planRoll('$4.99', '$4.99', WINDOW), null);
+});
+
+test('an increase that changes a digit rolls that digit only', () => {
+  // The live case: a $0.09 rise moves the cents column by one.
+  const plan = planRoll('$4.99', '$5.08', WINDOW);
+  assert.ok(plan);
+  assert.deepEqual(
+    plan.columns.map((c) => [c.index, c.from, c.to, c.steps]),
+    [
+      [4, 9, 8, 9],
+      [3, 9, 0, 1],
+      [1, 4, 5, 1],
+    ],
+  );
+});
+
 test('a strip parks on its starting digit before the roll begins', () => {
   // Every cell the roll can reach is inside the strip: nine steps forward plus
   // the two decades a wrapping column can cross.

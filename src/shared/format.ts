@@ -34,6 +34,112 @@ export function formatSpendCompact(micro: number | null | undefined): string {
   return formatSpend(micro);
 }
 
+/**
+ * A number rounded to at most `maxSig` significant digits, in plain decimal.
+ *
+ * Decimals are dropped as the magnitude grows, so 1.234, 12.34, 123.4, and 1234
+ * all carry four significant digits rather than a fixed number of decimal
+ * places.
+ */
+export function formatSignificant(value: number, maxSig = 4): string {
+  const abs = Math.abs(value);
+  if (!Number.isFinite(abs) || abs === 0) return '0';
+  const decimals = Math.max(0, Math.min(6, maxSig - 1 - Math.floor(Math.log10(abs))));
+  return abs.toFixed(decimals);
+}
+
+/**
+ * A fixed-decimal string with trailing zeroes removed.
+ *
+ * `1.500` becomes `1.5` and `12.00` becomes `12`, so a label never spends width
+ * on digits that carry no information.
+ */
+function trimZerosFixed(value: string): string {
+  if (!value.includes('.')) return value;
+  const out = value.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+  return out === '' ? '0' : out;
+}
+
+/**
+ * Spend for an axis tick or a narrow cell.
+ *
+ * Four significant digits at most, never finer than $0.001, and K/M as the
+ * amounts grow so a label still fits the left gutter. `$0.0001` cannot be
+ * produced: decimals stop at three, which is the $0.001 floor.
+ */
+export function formatSpendAxis(micro: number | null | undefined): string {
+  if (micro === null || micro === undefined || !Number.isFinite(micro)) return DASH;
+  const usd = micro / MICRO;
+  const abs = Math.abs(usd);
+  const sign = usd < 0 ? '-' : '';
+  if (abs === 0) return '$0';
+  // Anything below half a thousandth of a dollar is zero at this resolution.
+  // The tick generator floors its step at $0.001, so a sub-milli label is only
+  // ever produced for a value that rounds away.
+  if (abs < 0.0005) return '$0';
+  if (abs >= 1_000_000_000) return `${sign}$${trimZerosFixed(formatSignificant(abs / 1_000_000_000))}B`;
+  if (abs >= 1_000_000) return `${sign}$${trimZerosFixed(formatSignificant(abs / 1_000_000))}M`;
+  if (abs >= 1_000) return `${sign}$${trimZerosFixed(formatSignificant(abs / 1_000))}K`;
+  // Four significant digits, floored at $0.001 so a tick never needs a fourth
+  // decimal, and capped so a large label does not spend width on cents.
+  const decimals = Math.min(3, Math.max(0, 4 - 1 - Math.floor(Math.log10(abs))));
+  const label = trimZerosFixed(abs.toFixed(decimals));
+  // A value just under a thousand would round to `1000`, which is a K-scale
+  // number. Re-label it at that scale rather than printing five digits.
+  if (Number(label) >= 1_000) {
+    return `${sign}$${trimZerosFixed(formatSignificant(abs / 1_000))}K`;
+  }
+  return `${sign}$${label}`;
+}
+
+/**
+ * Token count for an axis tick.
+ *
+ * Tokens have no sub-unit to floor, so the axis and the display budgets agree
+ * and this delegates: unlike spend, a token label needs no coarser fallback.
+ */
+export function formatTokensAxis(value: number | null | undefined): string {
+  return formatTokensPrecise(value);
+}
+
+/**
+ * One formatter per metric for axis labels, so the two charts use the same
+ * digit rules. This is the tight budget: it must fit the left gutter.
+ */
+export function formatAxisValue(metric: 'spend' | 'tokens', value: number | null | undefined): string {
+  return metric === 'spend' ? formatSpendAxis(value) : formatTokensAxis(value);
+}
+
+/**
+ * The display formatter for strip cells and headlines.
+ *
+ * This is deliberately richer than the axis formatter: a headline is the one
+ * number the reader is looking at, so it keeps four significant digits below a
+ * dollar (`$0.06480`) where an axis label would not. Tokens use the same
+ * budget, so a token total and a spend total of the same relative size are
+ * stated to the same precision.
+ */
+export function formatMetricValue(metric: 'spend' | 'tokens', value: number | null | undefined): string {
+  if (metric === 'spend') return formatSpendCompact(value);
+  return formatTokensPrecise(value);
+}
+
+/**
+ * Token count at four significant digits, with K/M/B above a thousand.
+ *
+ * The strip and the headline need more resolution than the compact two-digit
+ * form: `3.755M` says whether the number moved, `3.75M` can hide a real change.
+ */
+export function formatTokensPrecise(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return DASH;
+  const abs = Math.abs(value);
+  const sign = value < 0 ? '-' : '';
+  if (abs >= 1_000_000_000) return `${sign}${trimZerosFixed(formatSignificant(abs / 1_000_000_000))}B`;
+  if (abs >= 1_000_000) return `${sign}${trimZerosFixed(formatSignificant(abs / 1_000_000))}M`;
+  if (abs >= 1_000) return `${sign}${trimZerosFixed(formatSignificant(abs / 1_000))}K`;
+  return `${sign}${Math.round(abs)}`;
+}
+
 export function compactNumber(value: number): string {
   const abs = Math.abs(value);
   const sign = value < 0 ? '-' : '';
@@ -69,7 +175,7 @@ export function formatPercent(value: number): string {
   return `${Math.round(value)}%`;
 }
 
-/** Relative age label used on the logarithmic axis, e.g. 5m, 3h, 2d, 6mo. */
+/** Relative age label used on the time axis, e.g. 5m, 3h, 2d, 6mo. */
 export function formatAge(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) return DASH;
   const sec = ms / 1000;

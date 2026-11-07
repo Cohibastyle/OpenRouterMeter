@@ -41,7 +41,6 @@ export interface ChartRequest {
   anchor: number;
   timeZone: string;
   weekStart: 'monday' | 'sunday';
-  axis: 'log' | 'linear';
   /** Ranges each granularity was fetched for, so coverage is not guessed. */
   collectionRanges?: ReadonlyArray<CollectionRange>;
   requests: ReadonlyArray<RequestRecord>;
@@ -68,7 +67,8 @@ export function buildPeriod(scale: ChartScale, anchor: number, _weekStart: 'mond
   const start = end - span;
 
   const bins: Array<{ start: number; end: number }> = [];
-  // Align the first bin down to a bin boundary so bars are stable as time moves.
+  // The time axis is linear, so equal spans of time get equal widths. Bins are
+  // aligned down to a bin boundary so bars are stable as time moves.
   const firstBin = Math.floor(start / binMs) * binMs;
   for (let t = firstBin; t < end; t += binMs) {
     bins.push({ start: t, end: t + binMs });
@@ -85,7 +85,7 @@ export function buildChart(request: ChartRequest): ChartData {
 
   const bins: ChartBin[] = period.bins
     // A bin that has not started yet is not data; drawing it would pile every
-    // future bin onto the right edge of the log axis.
+    // future bin onto the right edge of the time axis.
     .filter((bin) => bin.start < axisEnd)
     .map((bin) => {
       // One granularity per bin. Summing every row would count the same spend
@@ -127,13 +127,12 @@ export function buildChart(request: ChartRequest): ChartData {
     total_spend_micro: totalSpend,
     total_input_tokens: totalInput,
     total_output_tokens: totalOutput,
-    axis: request.axis,
     sample: request.sample,
   };
 }
 
 /**
- * Nominal bin width in ms, used as a_min for the log axis. The most common
+ * Nominal bin width in ms, the finest bucket the range can resolve. The most common
  * width is used so the clamped current partial bin cannot shrink the axis.
  */
 export function finestBinMs(chart: ChartData): number {

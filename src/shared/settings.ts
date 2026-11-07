@@ -28,7 +28,6 @@ export interface Settings {
     metric_models: Metric;
     metric_api: Metric;
     animations: 'on' | 'reduced' | 'off';
-    chart_axis: 'log' | 'linear';
   };
   view: {
     tab: TabId;
@@ -64,7 +63,6 @@ export const DEFAULT_SETTINGS: Settings = {
     metric_models: 'tokens',
     metric_api: 'spend',
     animations: 'on',
-    chart_axis: 'log',
   },
   view: {
     tab: 'spending',
@@ -109,7 +107,6 @@ const SCHEMA: Record<string, Record<string, Validator>> = {
     metric_models: oneOf('spend', 'tokens'),
     metric_api: oneOf('spend', 'tokens'),
     animations: oneOf('on', 'reduced', 'off'),
-    chart_axis: oneOf('log', 'linear'),
   },
 };
 

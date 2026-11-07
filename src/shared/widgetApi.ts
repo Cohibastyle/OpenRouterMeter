@@ -119,6 +119,8 @@ export interface WidgetApi {
     getState(): Promise<WindowStateResult>;
     setState(patch: Partial<WindowState>): Promise<WindowStateResult>;
     minimize(): Promise<void>;
+    /** Move the window by a screen-space delta; used by the drag handle. */
+    moveBy(delta: { dx: number; dy: number }): Promise<WindowState['bounds'] | null>;
     hide(): Promise<void>;
     close(): Promise<void>;
     resetSize(): Promise<WindowState['bounds'] | null>;

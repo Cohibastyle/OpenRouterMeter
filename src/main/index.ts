@@ -823,7 +823,6 @@ function buildChartData(params: {
     anchor: params.anchor,
     timeZone: settings.parameters.time_zone,
     weekStart: settings.parameters.week_start,
-    axis: settings.display.chart_axis,
     requests,
     // Sample means the rows themselves are generated examples, which is what
     // the badge claims. Credential state is reported separately via account.
@@ -1017,6 +1016,26 @@ function registerIpc(): void {
   });
 
   ipcMain.handle('window:minimize', () => mainWindow?.minimize());
+
+  /**
+   * Move the window by a screen-space delta.
+   *
+   * Dragging is done here rather than with `-webkit-app-region: drag` because a
+   * non-opaque window with a `backdrop-filter` surface does not take part in
+   * the native drag hit test: the region is present and hit-testable, but a
+   * press on it never starts a window move. Deltas are accumulated in the
+   * renderer and applied here so the window follows the cursor exactly.
+   */
+  ipcMain.handle('window:moveBy', (_event, delta: { dx?: number; dy?: number }) => {
+    if (!mainWindow) return null;
+    const dx = Math.round(Number(delta?.dx) || 0);
+    const dy = Math.round(Number(delta?.dy) || 0);
+    if (dx === 0 && dy === 0) return mainWindow.getBounds();
+    const current = mainWindow.getBounds();
+    mainWindow.setBounds({ ...current, x: current.x + dx, y: current.y + dy });
+    scheduleBoundsWrite();
+    return mainWindow.getBounds();
+  });
   ipcMain.handle('window:hide', () => {
     mainWindow?.hide();
     windowState.visible = false;
@@ -1384,9 +1403,6 @@ async function bootstrap(): Promise<void> {
 async function runCapture(): Promise<void> {
   const outDir = join(app.getPath('userData'), 'captures');
   mkdirSync(outDir, { recursive: true });
-  // Capture mutates the chart axis to demonstrate the override. Remember the
-  // original so the run never leaves the widget in a non-default state.
-  const originalAxis = settings.display.chart_axis;
   if (!mainWindow) return;
   mainWindow.showInactive();
 
@@ -1479,7 +1495,7 @@ async function runCapture(): Promise<void> {
     console.log(`captured ${shot.name}`);
   }
 
-  // Charts subview with the logarithmic axis, opened from a strip cell.
+  // Charts subview, opened from a strip cell.
   mainWindow.setBounds({ x: 60, y: 60, width: 640, height: 420 });
   settings.view.tab = 'spending';
   mainWindow.webContents.send('view:tab', 'spending');
@@ -1489,25 +1505,8 @@ async function runCapture(): Promise<void> {
   );
   await new Promise((r) => setTimeout(r, 1200));
   const chartImage = await mainWindow.webContents.capturePage();
-  writeFileSync(join(outDir, '09-charts-log-axis-640x420.png'), chartImage.toPNG());
-  console.log('captured 09-charts-log-axis-640x420');
-
-  // Linear axis override: the persistent label must appear. The setting is
-  // applied through the renderer's own settings path, which re-renders in
-  // place. Reloading the window here left the page blank, so it is avoided.
-  // Drive the inline Log/Linear toggle on the chart itself.
-  mainWindow.webContents.send('view:tab', 'spending');
-  await new Promise((r) => setTimeout(r, 900));
-  await mainWindow.webContents.executeJavaScript(
-    `[...document.querySelectorAll('.inline-chart-header button')]
-       .find((b) => b.textContent === 'Linear')?.click()`,
-  );
-  await new Promise((r) => setTimeout(r, 1200));
-  const linearImage = await mainWindow.webContents.capturePage();
-  writeFileSync(join(outDir, '11-charts-linear-override.png'), linearImage.toPNG());
-  console.log('captured 11-charts-linear-override');
-  settings.display.chart_axis = originalAxis;
-  flushSettings();
+  writeFileSync(join(outDir, '09-charts-640x420.png'), chartImage.toPNG());
+  console.log('captured 09-charts-640x420');
 
   // Range buttons must each produce a different X axis. Read the axis labels
   // back from the canvas so a regression is caught rather than eyeballed.
@@ -1525,51 +1524,6 @@ async function runCapture(): Promise<void> {
     const image = await mainWindow.webContents.capturePage();
     writeFileSync(join(outDir, `16-range-${range}.png`), image.toPNG());
     console.log(`captured 16-range-${range} (header: ${label})`);
-  }
-
-  // TEMP-CHART
-  for (const [w, h] of [[766, 500], [766, 400], [520, 280], [520, 279], [760, 300], [900, 560]] as Array<[number, number]>) {
-    mainWindow.setBounds({ x: 60, y: 60, width: w, height: h });
-    mainWindow.webContents.send('view:tab', 'requests');
-    await new Promise((r) => setTimeout(r, 900));
-    const info = await mainWindow.webContents.executeJavaScript(`(() => {
-      const view = document.querySelector('.view');
-      const ic = document.querySelector('.inline-chart');
-      return { ovf: view.scrollHeight - view.clientHeight, mode: document.getElementById('root').dataset.mode, chart: Boolean(ic) };
-    })()`);
-    console.log('CHART', JSON.stringify({ w, h, ...info }));
-    const im = await mainWindow.webContents.capturePage();
-    writeFileSync(join(outDir, `final-${w}x${h}.png`), im.toPNG());
-  }
-
-  // TEMP-CHART
-  const worst = 'OpenRouter reports daily totals only, so the short windows cannot be computed. Daily report stops at Oct 30, 5 days ago. Today is live from the account counter; charts cover reported days only.';
-  for (const tabName of ['requests', 'spending']) {
-    for (const w of [360, 420, 520, 600, 760, 900]) {
-      for (let h = 200; h <= 300; h += 10) {
-        mainWindow.setBounds({ x: 60, y: 60, width: w, height: h });
-        mainWindow.webContents.send('view:tab', tabName);
-        await new Promise((r) => setTimeout(r, 300));
-        const info = await mainWindow.webContents.executeJavaScript(`(() => {
-          const view = document.querySelector('.view');
-          if (!view) return null;
-          const chart = document.querySelector('.inline-chart');
-          const measure = () => {
-            const cw = document.querySelector('.chart-wrap');
-            return { ovf: view.scrollHeight - view.clientHeight, cwH: cw ? Math.round(cw.getBoundingClientRect().height) : null, icH: chart ? Math.round(chart.getBoundingClientRect().height) : null };
-          };
-          const plain = measure();
-          const note = document.createElement('div');
-          note.className = 'lag-note';
-          note.textContent = ${JSON.stringify(worst)};
-          view.insertBefore(note, view.children[1] ?? null);
-          const withNote = measure();
-          note.remove();
-          return { showChart: Boolean(chart), plain, withNote };
-        })()`);
-        console.log('CHART', JSON.stringify({ tabName, w, h, ...info }));
-      }
-    }
   }
 
   // Settings help popup: hover a label so the verbose explanation is visible.

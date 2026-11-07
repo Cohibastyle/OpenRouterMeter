@@ -170,6 +170,28 @@ body {
   border-bottom: 1px solid var(--border);
   background: rgba(0, 0, 0, 0.16);
   -webkit-app-region: drag;
+  cursor: default;
+  user-select: none;
+}
+
+/*
+ * A scripted drag is running, so the pointer is grabbing and the bar must not
+ * start a text selection as the pointer crosses it.
+ */
+.statusbar.is-dragging {
+  cursor: grabbing;
+}
+
+.statusbar.is-dragging,
+.statusbar.is-dragging * {
+  cursor: grabbing;
+  user-select: none;
+}
+
+/* The lock is the display setting that suppresses a drag by design. */
+.root[data-locked='true'] .statusbar {
+  -webkit-app-region: no-drag;
+  cursor: default;
 }
 
 :root[data-theme='light'] .statusbar {
@@ -437,9 +459,14 @@ body {
 }
 
 /*
- * A cell too narrow for its value shows the interval alone. Centring it keeps
- * the strip reading as a row of range buttons rather than a row of labels
- * pinned to the top of tall empty boxes.
+ * Every cell is two rows: the interval on top, the figure below. Keeping one
+ * arrangement at every width means the strip does not change shape as the
+ * window grows, and the interval stays in the same place so it still reads as
+ * the range button.
+ *
+ * A cell too narrow for its value shows the interval alone, centred, so the
+ * strip degrades to a row of range buttons rather than a row of labels pinned
+ * to the top of tall empty boxes.
  *
  * The label keeps the same font, weight, and colour as it has at every other
  * detail level: a larger or brighter label-only cell made the range row look
@@ -451,29 +478,35 @@ body {
   padding: 5px 4px;
 }
 
+.strip[data-detail='label'] .cell-top {
+  justify-content: center;
+}
+
 /*
- * At the widest level all three parts share one line, so the cell reads as a
- * compact readout rather than a stacked card. The interval sits first, then the
- * figure, then the count, with the figure taking the accent.
+ * The top row holds the interval and, when the cell has the width for it, the
+ * request count pushed to the right edge. The count is the first thing dropped
+ * as the cell narrows, because the interval identifies the range button and the
+ * count does not.
  */
-.strip[data-detail='full'] .cell {
-  flex-direction: row;
+.cell-top {
+  display: flex;
   align-items: baseline;
-  gap: 6px;
-  padding: 5px 8px;
+  gap: 4px;
+  min-width: 0;
 }
 
-.strip[data-detail='full'] .cell-label {
-  flex: 0 0 auto;
-}
-
-.strip[data-detail='full'] .cell-value {
+.cell-top .cell-label {
   flex: 0 1 auto;
+  min-width: 0;
 }
 
-.strip[data-detail='full'] .cell-sub {
+.cell-top .cell-sub {
   flex: 0 0 auto;
   margin-left: auto;
+}
+
+.strip[data-detail='full'] .cell {
+  padding: 5px 8px;
 }
 
 .cell:hover {
@@ -888,6 +921,17 @@ body {
 }
 
 /* ---------- chart ---------- */
+
+/*
+ * Standard at a short height hides the chart instead of truncating it. With no
+ * plot to fill the space the headline would sit at the top over a large empty
+ * area, so centre it: the layout then reads as deliberate rather than as a chart
+ * that failed to load. Micro and Compact are fitted to their box and keep their
+ * own alignment.
+ */
+.root[data-mode='standard'][data-show-chart='false'] .view > .metrics {
+  margin-block: auto;
+}
 
 .chart-wrap {
   position: relative;
@@ -2129,6 +2173,21 @@ input[type='range'] {
 .row-breakdown {
   grid-template-columns: minmax(0, 1fr) 62px 68px;
   align-items: center;
+}
+
+/*
+ * A known key that reported nothing in the interval. It stays legible — the
+ * point of the row is that the key exists — but its dashes read as absent
+ * numbers rather than as a zero, so the row is dimmed rather than hidden.
+ */
+.row-breakdown[data-idle='true'] .r-model,
+.row-breakdown[data-idle='true'] .r-key {
+  color: var(--text-faint);
+}
+
+.row-breakdown[data-idle='true'] .r-tokens,
+.row-breakdown[data-idle='true'] .r-cost {
+  color: var(--text-faint);
 }
 
 .row-breakdown .r-main {

@@ -58,7 +58,7 @@ export const HEIGHT_CLASS = {
  * the chart at that point instead of truncating it, per the "hide, do not
  * shrink below legibility" rule.
  */
-export const CHART_MIN_HEIGHT = 220;
+export const CHART_MIN_HEIGHT = 280;
 
 export const LOG_RING_CAPACITY = 2000;
 export const LOG_ROTATE_BYTES = 5 * 1024 * 1024;

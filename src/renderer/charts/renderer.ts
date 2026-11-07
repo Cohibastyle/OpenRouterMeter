@@ -1,16 +1,14 @@
 import {
-  createLinearAxis,
-  createLogAxis,
+  createTimeAxis,
   generateTicks,
   generateValueTicks,
   hitTest,
-  type LogAxis,
-} from '../../shared/logAxis.js';
-import { formatAge, formatSpend, formatSpendCompact, formatTokensCompact } from '../../shared/format.js';
+  type TimeAxis,
+} from '../../shared/timeAxis.js';
+import { formatAge, formatAxisValue, formatSpend, formatTokensCompact } from '../../shared/format.js';
 import type { ChartData } from '../../shared/types.js';
 
 export interface ChartOptions {
-  axis: 'log' | 'linear';
   metric: 'spend' | 'tokens';
   onBinClick?: (index: number) => void;
 }
@@ -38,6 +36,12 @@ const BAR_GAP_MAX_PX = 16;
  */
 const VALUE_TICK_MIN_GAP = 26;
 
+/**
+ * Smallest left gutter, so a plot of zeros still keeps its axis off the edge.
+ * The gutter grows past this when a label needs the room.
+ */
+const VALUE_AXIS_MIN_PAD_LEFT = 26;
+
 const COLORS = {
   spend: '#34d399',
   // Tokens use the tab's orange accent so the chart, the selected interval, and
@@ -54,9 +58,10 @@ const COLORS = {
 };
 
 /**
- * Canvas chart renderer. Every graph uses the logarithmic time axis from FSD
- * section 10.11.1 unless the accessibility override is enabled, in which case a
- * persistent "Linear axis" label is drawn.
+ * Canvas chart renderer.
+ *
+ * The time axis is linear: a bucket's width on screen is proportional to how
+ * long that bucket was, so a bar can be read as a duration as well as a value.
  */
 export class ChartRenderer {
   private readonly canvas: HTMLCanvasElement;
@@ -64,7 +69,7 @@ export class ChartRenderer {
   private readonly tooltip: HTMLDivElement;
   private data: ChartData | null = null;
   private options: ChartOptions;
-  private axis: LogAxis | null = null;
+  private axis: TimeAxis | null = null;
   private bins: RenderedBin[] = [];
   private hoverIndex = -1;
   private width = 0;
@@ -150,21 +155,21 @@ export class ChartRenderer {
 
     const padTop = 8;
     const padBottom = 14;
-    // A left gutter holds the value labels. Without it the Y axis has nowhere
-    // to draw and the plot starts at the very edge.
-    const padLeft = 46;
     const padRight = 6;
+    // A left gutter holds the value labels. Its width is measured from the
+    // widest label the axis will actually draw rather than assumed, so a long
+    // label such as `$12.34K` shortens the plot instead of being clipped at
+    // the left edge of the canvas.
+    const padLeft = this.padLeftForHeight(this.height - padTop - padBottom);
     const plotWidth = Math.max(1, this.width - padLeft - padRight);
     const plotHeight = Math.max(1, this.height - padTop - padBottom);
 
     const tEnd = new Date(this.data.period_end).getTime();
     const tStart = new Date(this.data.period_start).getTime();
-    const finest = this.finestBin();
 
-    this.axis =
-      this.options.axis === 'linear'
-        ? createLinearAxis(tStart, tEnd)
-        : createLogAxis(tStart, tEnd, finest);
+    // The time axis is linear, so equal spans of time get equal widths and a
+    // bar's width says how long its bucket was.
+    this.axis = createTimeAxis(tStart, tEnd);
 
     this.bins = this.data.bins.map((bin) => ({
       start: new Date(bin.start).getTime(),
@@ -185,7 +190,7 @@ export class ChartRenderer {
     // are 9px tall, so packing five of them into a compressed chart would make
     // them collide.
     const valueTickCount = Math.min(4, Math.max(1, Math.floor(plotHeight / VALUE_TICK_MIN_GAP)));
-    const valueTicks = generateValueTicks(rawMax, valueTickCount);
+    const valueTicks = generateValueTicks(rawMax, valueTickCount, this.minValueStep());
     const maxValue = Math.max(1, valueTicks[valueTicks.length - 1] ?? rawMax);
 
     // Grid lines first, so data sits above them.
@@ -201,9 +206,8 @@ export class ChartRenderer {
       const rawWidth = Math.max(1, rawEnd - rawStart);
 
       // Inset each bar so neighbouring bars are separated. The gap is a share of
-      // the bar's own width, so it stays proportional on the log axis where
-      // widths differ by orders of magnitude, and it is capped so a wide bar
-      // does not lose most of its area.
+      // the bar's own width, so a narrow bucket keeps the same visual rhythm as a
+      // wide one, and it is capped so a wide bar does not lose most of its area.
       const gap = Math.min(BAR_GAP_MAX_PX, Math.max(BAR_GAP_MIN_PX, rawWidth * BAR_GAP_RATIO));
       const inset = Math.min(gap / 2, Math.max(0, (rawWidth - 1) / 2));
       const xStart = rawStart + inset;
@@ -259,59 +263,15 @@ export class ChartRenderer {
 
     // Axis labels.
     this.drawLabels(ctx, padLeft, padTop + plotHeight + 2, plotWidth);
-
-    // The linear override must be unmistakable, so the label is drawn on the
-    // canvas rather than as an overlay that could be covered.
-    if (this.options.axis === 'linear') {
-      const text = 'Linear axis';
-      ctx.font = '9px -apple-system, system-ui, sans-serif';
-      const metrics = ctx.measureText(text);
-      const boxW = metrics.width + 8;
-      const boxH = 13;
-      // Inside the plot at the top left. The bottom edge belongs to the X axis
-      // labels and the top edge outside the plot belongs to the range header,
-      // so this is the only corner that stays clear at every range.
-      const boxX = padLeft + 3;
-      const boxY = padTop + 3;
-      ctx.fillStyle = 'rgba(251,191,36,0.18)';
-      ctx.fillRect(boxX, boxY, boxW, boxH);
-      ctx.strokeStyle = 'rgba(251,191,36,0.5)';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(boxX + 0.5, boxY + 0.5, boxW - 1, boxH - 1);
-      ctx.fillStyle = '#fbbf24';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(text, boxX + boxW / 2, boxY + boxH / 2 + 0.5);
-    }
   }
 
-  /**
-   * The nominal bin width, taken as the most common width across the bins. The
-   * current partial bin is clamped to the axis end, so using the minimum width
-   * would shrink a_min and distort the whole axis.
-   */
-  private finestBin(): number {
-    const counts = new Map<number, number>();
-    for (const bin of this.data?.bins ?? []) {
-      const w = new Date(bin.end).getTime() - new Date(bin.start).getTime();
-      if (w > 0) counts.set(w, (counts.get(w) ?? 0) + 1);
-    }
-    let best = 0;
-    let bestCount = 0;
-    for (const [w, count] of counts) {
-      if (count > bestCount || (count === bestCount && w < best)) {
-        best = w;
-        bestCount = count;
-      }
-    }
-    return best > 0 ? best : 1000;
-  }
+
 
   /**
    * Horizontal grid lines and their value labels.
    *
-   * The X axis is logarithmic by default, but the value axis is always linear:
-   * a log value axis would make a bar's height meaningless to read.
+   * The value axis is always linear: a log value axis would make a bar's height
+   * meaningless to read.
    */
   private drawValueAxis(
     ctx: CanvasRenderingContext2D,
@@ -340,13 +300,59 @@ export class ChartRenderer {
     }
   }
 
-  /** Compact label for a value-axis tick, in the chart's own units. */
-  private formatValue(value: number): string {
-    if (this.options.metric === 'spend') {
-      // Values are micro-dollars.
-      return formatSpendCompact(value);
+  /**
+   * Gutter width for the value labels, measured from the labels themselves.
+   *
+   * The tick values depend on the plot height, which depends on the gutter, so
+   * this estimates the tick count from the available height rather than
+   * iterating: the estimate only affects how wide the gutter is, and a tick
+   * count that lands one off still fits because the measurement uses the
+   * longest label the axis formats at that height.
+   */
+  private padLeftForHeight(availableHeight: number): number {
+    const tickCount = Math.min(4, Math.max(1, Math.floor(Math.max(1, availableHeight) / VALUE_TICK_MIN_GAP)));
+    const maxValue = this.data
+      ? Math.max(
+          0,
+          ...this.data.bins.map((bin) =>
+            this.options.metric === 'spend'
+              ? (bin.spend_micro ?? 0)
+              : (bin.input_tokens ?? 0) + (bin.output_tokens ?? 0),
+          ),
+        )
+      : 0;
+    const ticks = generateValueTicks(maxValue, tickCount, this.minValueStep());
+    // The measurement must use the same font the labels are drawn with.
+    this.ctx.font = '9px -apple-system, system-ui, sans-serif';
+    let widest = 0;
+    for (const value of ticks) {
+      const width = this.ctx.measureText(this.formatValue(value)).width;
+      if (width > widest) widest = width;
     }
-    return formatTokensCompact(value);
+    // 6px between the label and the plot, plus a pixel of rounding slack.
+    return Math.ceil(Math.max(VALUE_AXIS_MIN_PAD_LEFT, widest + 7));
+  }
+
+  /**
+   * Label for a value-axis tick, in the chart's own units.
+   *
+   * The axis uses the tighter digit budget so a label never outgrows the left
+   * gutter: four significant digits, no finer than $0.001, K/M above thousands.
+   */
+  private formatValue(value: number): string {
+    // Values are micro-dollars for spend and raw counts for tokens.
+    return formatAxisValue(this.options.metric, value);
+  }
+
+  /**
+   * Smallest step the value axis may take.
+   *
+   * A spend axis never resolves below $0.001, so a plot of fractions of a cent
+   * does not sprout a fourth decimal place. The bars still scale to the true
+   * maximum; only the labelled grid is floored.
+   */
+  private minValueStep(): number {
+    return this.options.metric === 'spend' ? 1000 : 1;
   }
 
   private drawGrid(

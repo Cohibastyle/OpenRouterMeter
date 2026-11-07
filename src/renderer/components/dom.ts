@@ -43,7 +43,11 @@ export const ICONS = {
   requests: 'M2 3h12v1.5H2V3zm0 4h12v1.5H2V7zm0 4h8v1.5H2V11z',
   models: 'M8 1.5 14 5v6l-6 3.5L2 11V5l6-3.5zm0 1.7L3.5 5.6 8 7.9l4.5-2.3L8 3.2zM3.5 7.1v3.4L7.3 12V8.7L3.5 7.1zm9 0L8.7 8.7V12l3.8-1.5V7.1z',
   log: 'M3 2h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm1 3v1.4h8V5H4zm0 3v1.4h8V8H4zm0 3v1.4h5V11H4z',
-  api: 'M8 1a3 3 0 0 1 3 3v1h1a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h1V4a3 3 0 0 1 3-3zm0 1.5A1.5 1.5 0 0 0 6.5 4v1h3V4A1.5 1.5 0 0 0 8 2.5z',
+  // A key, not a padlock: this tab lists API keys, and the padlock was the
+  // only tab icon that described access control rather than the tab's contents.
+  // The bow is drawn as two opposing circles, so the nonzero fill rule leaves a
+  // hole; the shaft and its two teeth hang off the bow to the right.
+  api: 'M4.5 4.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zM4.5 6.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM7.9 7.2H15V8.8H13.8V10.6H12.2V8.8H11.1V11.4H9.5V8.8H7.9Z',
   settings:
     'M6.39 3.05 6.78 1.11h2.44l.39 1.94a5.2 5.2 0 0 1 .75.32l1.66-1.1 1.71 1.71-1.1 1.66a5.2 5.2 0 0 1 .32.75l1.94.39v2.44l-1.94.39a5.2 5.2 0 0 1-.32.75l1.1 1.66-1.71 1.71-1.66-1.1a5.2 5.2 0 0 1-.75.32l-.39 1.94H6.78l-.39-1.94a5.2 5.2 0 0 1-.75-.32l-1.66 1.1-1.71-1.71 1.1-1.66a5.2 5.2 0 0 1-.32-.75l-1.94-.39V6.78l1.94-.39a5.2 5.2 0 0 1 .32-.75l-1.1-1.66 1.71-1.71 1.66 1.1a5.2 5.2 0 0 1 .75-.32ZM8 5.7a2.3 2.3 0 1 0 0 4.6 2.3 2.3 0 0 0 0-4.6Z',
   chevron: 'M6 3.5 10.5 8 6 12.5 4.9 11.4 8.3 8 4.9 4.6z',

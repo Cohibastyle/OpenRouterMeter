@@ -76,7 +76,6 @@ test('every documented settings control has help text', () => {
     'Default tab',
     'Micro window',
     'Animations',
-    'Chart time axis',
   ];
   for (const label of labels) {
     const text = SETTINGS_HELP[label];

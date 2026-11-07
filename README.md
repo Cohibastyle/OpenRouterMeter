@@ -1,21 +1,27 @@
 # OpenRouter Meter
 
-A frameless, always-on-top desktop widget that shows OpenRouter spending, token
-usage, charts, and the latest request. It is a self-contained Electron app: the
-OpenRouter credential lives in the OS credential store, collection happens in the
-main process, and history is kept in a local SQLite database.
+A frameless, always-on-top desktop widget that shows OpenRouter spending and token
+usage. It is a self-contained Electron app: the OpenRouter credential lives in the
+OS credential store, collection happens in the main process, and history is kept in
+a local SQLite database.
 
 This is the macOS build. The same source targets Windows and Linux; see
 [Platform notes](#platform-notes).
 
-![Spending tab](docs/images/spending-standard.png)
+![Spending tab at 520 x 420](docs/images/spending-standard.png)
+
+## Screenshots
 
 | | |
 |---|---|
-| ![Expanded](docs/images/spending-expanded.png) | ![Micro](docs/images/spending-micro.png) |
-| ![Requests](docs/images/requests.png) | ![Log](docs/images/log.png) |
-| ![API](docs/images/api.png) | ![Settings](docs/images/settings.png) |
-| ![Logarithmic axis](docs/images/charts-log-axis.png) | ![Linear override](docs/images/charts-linear-override.png) |
+| ![Expanded dashboard](docs/images/spending-expanded.png) | ![Compact](docs/images/spending-compact.png) |
+| ![Micro badge](docs/images/spending-micro.png) | ![Tokens](docs/images/tokens.png) |
+| ![Keys](docs/images/keys.png) | ![Models](docs/images/models.png) |
+| ![Settings](docs/images/settings.png) | ![Settings display group](docs/images/settings-display.png) |
+| ![Log group](docs/images/log.png) | ![Chart](docs/images/charts.png) |
+
+All screenshots are rendered from the built-in sample data, so no real account
+figures appear in them.
 
 ## Download the macOS app
 
@@ -71,20 +77,27 @@ Keychain. It is never written to the database, a settings file, a log, or the
 renderer. If OS encryption is unavailable, the widget refuses to persist the key
 and keeps it in memory for the session only.
 
+A **management key** is required for the live source. Analytics queries and the
+key list both need one; with a non-management key the widget falls back to the
+older activity feed and says so in the UI.
+
 ## Using the widget
 
 Five tabs, always in this order:
 
-| Tab | What it shows |
-|---|---|
-| Spending | Rolling window strip, today and month totals, current-day trend, latest request |
-| Requests | Rolling window strip with request counts, then recent requests newest first |
-| Log | The widget's own application event log |
-| API | Scope selector: all keys or one specific key, plus a per-key breakdown |
-| Settings | Parameters, display options, API key, version, support, diagnostics |
+| Tab | Accent | What it shows |
+|---|---|---|
+| Spending | green | Rolling window strip, spend for the selected interval, spend chart |
+| Tokens | orange | Rolling window strip, token total for the selected interval, token chart |
+| Keys | purple | Rolling window strip, then spend and tokens per API key |
+| Models | blue | Rolling window strip, then spend and tokens per model |
+| Settings | slate | Parameters, display, API key, version, support, diagnostics, scope, log |
 
-Charts is a subview, not a tab. Open it from a summary strip cell or from a total;
-`Escape` or **Back** returns to the view that opened it.
+The **Log** is not a tab. It is the last group in Settings, next to the other
+diagnostic material.
+
+Charts are inline on the Spending and Tokens tabs. Clicking the headline value
+opens a full-size chart subview; `Escape` or **Back** returns to the tab.
 
 ### Rolling window summary
 
@@ -92,28 +105,31 @@ The strip reports five trailing windows: `10m`, `1h`, `3h`, `6h`, `24h`. They ar
 trailing and overlapping, never additive. `24h` is a trailing 24 hours, not the
 calendar day.
 
+The cells double as range buttons. Selecting one highlights it and redraws the
+headline and chart for that interval.
+
 A window is shown only when it can be computed honestly. If the finest source
 granularity is coarser than a quarter of the window, the cell reads `–` with
 reason `source_granularity` rather than an interpolated guess. Missing is never
-rendered as zero.
+rendered as zero. A cell marked `~` has partial coverage, for example because
+collection started inside the window.
 
-### Logarithmic time axis
+### Time axis
 
-Every graph uses a logarithmic X axis, so recent data occupies most of the width
-and older data compresses toward the left. Vertical grid lines compress with it.
+Every graph uses a linear time axis: each bucket gets a width in proportion to the
+time it covers, and the vertical grid lines follow it.
 
 ```
-x(t) = 1 - (log(a) - log(a_min)) / (log(a_max) - log(a_min))     a = t_end - t
+x(t) = (t - t_start) / (t_end - t_start)
 ```
 
-The axis is a rendering choice only: it does not change period selection, bin
-boundaries, or totals. A linear axis exists as an accessibility override in
-Settings → Display, off by default, and shows a persistent `Linear axis` label.
+The axis is a rendering choice only; it does not change period selection, bin
+boundaries, or totals.
 
 ### Resizing
 
-Drag any edge or corner. The layout reflows continuously from a 180 x 120 badge to
-a full dashboard with no clipping and no horizontal scrolling.
+Drag the handle in the bottom-right corner. The layout reflows continuously from a
+180 x 120 badge to a full dashboard with no clipping and no horizontal scrolling.
 
 | Width | Class | Height | Class |
 |---|---|---|---|
@@ -125,6 +141,10 @@ a full dashboard with no clipping and no horizontal scrolling.
 
 Derived modes: **Micro** (XS width or Short height), **Compact** (S + Regular),
 **Standard** (M, or L/XL + Regular), **Expanded** (L/XL + Tall).
+
+The chart appears whenever there is room for a legible plot: always in Expanded,
+and in Standard only above 280 px of height. Below that the chart is hidden rather
+than squeezed under its legibility floor.
 
 ## Keyboard
 
@@ -145,13 +165,41 @@ Show or hide, always-on-top toggle, ghost mode, refresh now, open settings, quit
 ```bash
 npm run build      # bundle main, preload, and renderer into dist/
 npm run typecheck  # tsc --noEmit
-npm test           # unit tests for accounting, time, axis, layout, redaction
-npm run selftest   # launch the app and run 11 runtime checks
+npm test           # 113 unit tests for accounting, time, axis, layout, redaction
+npm run selftest   # launch the app and run 15 runtime checks
 npm run capture    # render each size class to PNG for review
+npm run dist:mac   # build a distributable DMG into dist/
 ```
 
 `npm run capture` writes images to
-`~/Library/Application Support/OpenRouter Meter/captures/`.
+`~/Library/Application Support/OpenRouter Meter/captures/`. It needs the
+single-instance lock, so quit a running widget first, or pass a separate data
+folder:
+
+```bash
+./node_modules/.bin/electron . --capture --user-data-dir=/tmp/ormeter-capture
+```
+
+### Bundle size
+
+The DMG is about 80 MB. Almost all of it is the Chromium binary inside
+`Electron Framework.framework` (164 MB unpacked), so the remaining savings come
+from what is left out rather than from the app code, which is under 1 MB.
+
+`scripts/afterPack.mjs` runs after packaging and removes two things the widget
+does not use:
+
+- **Chromium translations.** `mac.electronLanguages` only prunes the app's own
+  `Contents/Resources/*.lproj`; the 212 locale folders inside
+  `Electron Framework.framework` are 44 MB and are removed by the hook. English
+  and `en_GB` are kept, and every date and number in the UI is formatted with an
+  explicit `en-US` locale.
+- **SwiftShader.** `libvk_swiftshader.dylib` is a 16 MB CPU rasterizer used only
+  when no GPU is available. The widget draws 2D content through the normal GPU
+  path and renders correctly with `--disable-gpu`, so the fallback is dropped.
+
+The DMG uses `UDBZ` (bzip2) rather than the default `UDZO`; it compresses this
+bundle about 19 MB smaller.
 
 ### Project layout
 
@@ -162,7 +210,7 @@ src/main/diagnostics/ environment, storage, performance, bundle redaction
 src/preload/         the context bridge surface and its types
 src/renderer/        views, components, responsive styles
 src/renderer/charts/ log time scale, tick generator, bar renderer, hit testing
-src/shared/          types, schemas, money, formatting, log axis, layout
+src/shared/          types, schemas, money, formatting, time axis, layout
 tests/               unit tests
 docs/                platform, API, security, data model, operations notes
 sample-data/         safe fixtures with no real secrets
@@ -177,7 +225,7 @@ sample-data/         safe fixtures with no real secrets
 - Every IPC handler validates and bounds its arguments.
 - Logs are redacted at write time, not at display time.
 - No telemetry, no analytics, no crash upload. The only outbound traffic is to
-  OpenRouter and the update check.
+  OpenRouter.
 
 ## Data locations
 
@@ -207,60 +255,59 @@ and clear all local data.
 These are properties of the OpenRouter API, verified against a live account, not
 defects in the widget. Each one is stated in the UI rather than hidden.
 
-- **Short windows cannot be computed.** The activity endpoint reports per-day,
-  per-model aggregates and ignores `granularity` and `interval`. The `10m`, `1h`,
-  `3h`, `6h`, and `24h` cells therefore report `unavailable` with reason
-  `source_granularity`. A note above the strip explains this once.
 - **The live source is `/analytics/query`, not `/activity`.** The older activity
   endpoint returns a fixed set of daily rows that can stop several days behind
   today and ignores every date filter. The analytics endpoint is what the
-  OpenRouter dashboard itself uses: it reports the current day, supports minute
-  and hour granularity, and can break spend down by key. The widget uses it as
-  the primary source and keeps `/activity` only as a fallback.
+  OpenRouter dashboard itself uses: it reports the current day, supports minute,
+  hour, and day granularity, and can break spend down by key. The widget uses it
+  as the primary source and keeps `/activity` only as a fallback.
 - **A management key is required for the live source.** Analytics and the key
   list both need one. With a non-management key the widget falls back to the
-  activity feed and says so.
+  activity feed, where the short windows cannot be computed and per-key data is
+  unavailable.
 - **Individual generations are not exposed.** Analytics returns aggregates, so
   the widget shows spend and tokens per bucket, not one row per request. The
-  per-generation list on openrouter.ai is not part of the public API. The Usage
-  tab therefore presents a breakdown of the same aggregates the charts use,
-  grouped by model, key, or provider, and says so rather than labelling minute
-  buckets as individual requests.
+  per-generation list on openrouter.ai is not part of the public API. The Keys
+  and Models tabs therefore present a breakdown of the same aggregates the charts
+  use, and say so rather than labelling minute buckets as individual requests.
 - **Today is exact only if the widget was running at midnight.** The credits
   counter supplies a live cross-check, but its derivation needs a reading from
   before the day started. Without one the figure is partial and the UI says
   `live since HH:MM` rather than implying a full day.
-- **No per-key breakdown.** Activity rows carry no `key_id` or `key_name`, so the
-  API tab reports that per-key data is unavailable instead of showing an empty
-  panel. Account totals are unaffected.
 - **A management key reports its own usage as zero.** `usage_daily` and friends
   are `0` for a management key because the usage belongs to the account. The
   widget ignores those fields in that case.
 - **The key label is the masked key.** OpenRouter returns the masked credential
   as `label` for a management key. The widget shows `Management key` instead and
   never persists a key-shaped label.
-- No account-wide request feed is confirmed, so latest-request coverage is
-  reported as `Selected apps` rather than `Full account`.
+- **No account-wide request feed is confirmed**, so request coverage is reported
+  as `Selected apps` rather than `Full account`.
+- **Update checks are a stub.** Settings → Version reports `up_to_date` without
+  contacting a server.
 - Currency is USD only in this release.
 
 ## Troubleshooting
 
-**Sample data still shows after entering a key.** Fixed. Sample rows are purged
-the moment a real credential is verified, and the sample flag is derived from the
+**Sample data still shows after entering a key.** Sample rows are purged the
+moment a real credential is verified, and the sample flag is derived from the
 connection state. If you upgraded from an earlier build, the stale rows are
 removed on the next launch and the removal is logged as
 `removed N sample request records`.
+
+**The banner says the saved key could not be read.** The credential file exists
+but the OS would not decrypt it, typically because the Keychain entry was reset.
+Re-enter the key in Settings → API key.
 
 **Today shows `$0.00` but the month is not zero.** Expected. OpenRouter has not
 published today's activity yet. The lag line under the metrics names the newest
 reported date.
 
-**The five window cells are all dashes.** Expected on a live account. The source
-only publishes daily totals, so a 10 minute window cannot be computed honestly.
-The widget refuses to interpolate one.
+**The five window cells are all dashes.** Expected with a non-management key.
+The activity fallback only publishes daily totals, so a 10 minute window cannot be
+computed honestly. The widget refuses to interpolate one.
 
-**The API tab says no per-key data.** Expected. The activity endpoint carries no
-key identity.
+**The Keys tab says per-key data is unavailable.** Expected on the activity
+fallback. The analytics source carries key identity; the activity feed does not.
 
 ## License
 

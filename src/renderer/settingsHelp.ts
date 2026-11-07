@@ -91,10 +91,6 @@ export const SETTINGS_HELP: Record<string, string> = {
     'On animates transitions. Reduced keeps short fades but removes movement. Off disables animation ' +
     'entirely, which is the calmest option and the lightest on CPU.',
 
-  'Chart time axis':
-    'Log compresses older time so a long range stays readable: recent buckets get more width and older ' +
-    'ones squeeze together, like a logarithmic grid. Linear gives every bucket equal width. ' +
-    'You can also switch this next to any chart.',
 
   Currency:
     'OpenRouter bills in US dollars, so all spend values are shown in USD and cannot be changed. ' +

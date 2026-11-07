@@ -7,23 +7,25 @@ export type LayoutMode = 'micro' | 'compact' | 'standard' | 'expanded';
 /**
  * How much a summary strip cell shows.
  *
- * The interval label is always drawn, because it is the cell's identity and the
- * range button. The value and then the request count are added as the cell
- * grows, so a narrow window degrades to a row of range buttons instead of a row
- * of truncated numbers.
+ * Every level is two rows: the interval on top, the figure below.
+ *
+ * `label` draws the interval alone, centred, and is what a cell too narrow for
+ * its value degrades to.
+ * `value` adds the figure on the second row.
+ * `full` also puts the request count on the top row, right-aligned.
  */
 export type StripDetail = 'label' | 'value' | 'full';
 
 /**
  * Content width, in CSS pixels, at which each detail level stops truncating.
  *
- * `value` stacks the interval above the figure, so it only needs room for the
- * wider of the two: about 58px covers `$0.7837` and `66.6M`.
+ * The cell is two rows at every level: the interval (and the request count,
+ * once there is room) on top, the figure below. `value` therefore only needs
+ * room for the wider of the two rows: about 58px covers `$0.7837` and `66.6M`.
  *
- * `full` puts all three on one line, which is what makes it a distinct level
- * rather than the same layout with one more row. That needs the interval, the
- * figure, and the count side by side: about 132px covers `24h $1,234.56 12 req`
- * with the gaps between them.
+ * `full` adds the request count to the top row, right-aligned. That row has to
+ * hold both the interval and the count with the gap between them, so it needs
+ * about 132px for `24h        12 req`.
  */
 export const STRIP_CELL_MIN_WIDTH: Record<StripDetail, number> = {
   label: 0,

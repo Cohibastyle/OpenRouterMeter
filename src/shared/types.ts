@@ -198,7 +198,6 @@ export interface ChartData {
   total_spend_micro: number;
   total_input_tokens: number;
   total_output_tokens: number;
-  axis: 'log' | 'linear';
   sample: boolean;
 }
 

@@ -50,7 +50,7 @@ export interface SampleOptions {
 
 /**
  * Generate request records with a realistic diurnal pattern and a long tail, so
- * the logarithmic axis has something meaningful to compress.
+ * the time axis has something meaningful to show.
  */
 export function generateSampleRequests(options: SampleOptions = {}): RequestRecord[] {
   const now = options.now ?? Date.now();
