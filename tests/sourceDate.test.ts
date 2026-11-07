@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSourceDate } from '../src/main/collectors/openrouter.ts';
+import { parseSourceDate } from '../src/shared/sourceDate.ts';
 
 test('a source date without a zone is parsed as UTC, not local time', () => {
   // OpenRouter returns "YYYY-MM-DD HH:mm:ss". Parsing that with new Date()

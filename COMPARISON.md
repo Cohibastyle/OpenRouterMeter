@@ -1,7 +1,7 @@
 # Electron vs Tauri
 
 Measured on the same machine (Apple silicon, macOS 27.0.0) from the same source
-tree. The renderer, the shared logic, and the 113 unit tests are identical in
+tree. The renderer, the shared logic, and the 128 unit tests are identical in
 both builds; only the host process differs.
 
 ## Size
@@ -35,7 +35,7 @@ because both builds spawn helpers.
 |---|---|---|
 | `src/renderer/` | 5,992 | unchanged |
 | `src/shared/` | 2,155 | unchanged |
-| `tests/` | 1,398 | unchanged, 113/113 pass |
+| `tests/` | 1,398 | unchanged, 128/128 pass |
 | `src/preload/` | 156 | replaced by `src-tauri/frontend/tauriBridge.ts` |
 
 The renderer still reads `window.widget`. The bridge implements the same
@@ -120,3 +120,29 @@ error.
 - Diagnostics reports a reduced bundle.
 - No code signing or notarization on either build.
 - The Tauri build has no update check; `app:checkForUpdates` returns `idle`.
+
+## What still depends on the Electron host
+
+The Electron host is therefore **not** removable yet. Deleting `src/main/` would
+break the following, which is why the two hosts are kept side by side:
+
+- **`src/renderer/` and `src/shared/` are shared, not Electron.** Roughly 8,100
+  lines the Tauri build compiles too, including `src/shared/widgetApi.ts`, the
+  contract both bridges implement.
+- **The cross-check oracle.** `scripts/gen-crosscheck.mjs` and
+  `scripts/gen-fixtures.mjs` run the real `buildSnapshot` from
+  `src/main/snapshot.ts` to generate the fixtures the Rust accounting must
+  reproduce exactly. That test is what caught the UTC day-boundary bug, so
+  deleting its reference would leave the Rust math unchecked against itself.
+- **`tests/sourceDate.test.ts`** imports `parseSourceDate` from
+  `src/main/collectors/openrouter.ts`. It is pure date parsing with no host
+  dependency, so it should move to `src/shared/` before the host goes.
+- **The shipped DMGs.** `.github/workflows/release-mac.yml` builds with
+  `electron-builder`; there is no Tauri release job.
+- **Log rotation and the structured logger**, which have no Rust equivalent.
+
+The order that makes the host removable is: port the logger, port
+`app:checkForUpdates`, move `parseSourceDate` into `src/shared/`, then port the
+cross-check generator to Rust or freeze the fixtures, and last replace the
+release workflow. Until then, removing `src/main/` trades a working build for a
+broken one.

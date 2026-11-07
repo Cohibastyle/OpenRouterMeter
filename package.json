@@ -22,6 +22,7 @@
     "tauri:capture": "node scripts/build-tauri.mjs && cargo-tauri build --bundles app && \"src-tauri/target/release/bundle/macos/OpenRouter Meter.app/Contents/MacOS/OpenRouter Meter\" --capture"
   },
   "devDependencies": {
+    "@tauri-apps/api": "^2.12.4",
     "electron": "^38.0.0",
     "electron-builder": "^25.1.8",
     "esbuild": "^0.25.0",

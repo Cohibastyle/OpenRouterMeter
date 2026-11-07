@@ -171,10 +171,6 @@ export function formatCount(value: number | null | undefined): string {
   return value.toLocaleString('en-US');
 }
 
-export function formatPercent(value: number): string {
-  return `${Math.round(value)}%`;
-}
-
 /** Relative age label used on the time axis, e.g. 5m, 3h, 2d, 6mo. */
 export function formatAge(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) return DASH;
@@ -223,13 +219,4 @@ export function formatAgeSince(iso: string | null | undefined, now = Date.now())
   const delta = now - then;
   if (delta < 0) return 'now';
   return `${formatAge(delta)} ago`;
-}
-
-export function truncateMiddle(value: string, max: number): string {
-  if (value.length <= max) return value;
-  if (max <= 3) return value.slice(0, max);
-  const keep = max - 1;
-  const head = Math.ceil(keep / 2);
-  const tail = Math.floor(keep / 2);
-  return `${value.slice(0, head)}\u2026${value.slice(value.length - tail)}`;
 }
