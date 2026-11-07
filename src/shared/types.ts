@@ -229,9 +229,11 @@ export interface VersionInfo {
   widget: string;
   build: string;
   commit: string;
-  electron: string;
-  chromium: string;
-  node: string;
+  runtime: string;
+  engine: string;
+  electron: string | null;
+  chromium: string | null;
+  node: string | null;
   sqlite: string;
   channel: 'stable' | 'beta';
   schema_version: number;

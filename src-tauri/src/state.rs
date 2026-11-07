@@ -462,6 +462,10 @@ impl AppState {
             "widget": env!("CARGO_PKG_VERSION"),
             "build": "tauri",
             "commit": "local",
+            // The host is Rust over the system WebKit view, so report those
+            // rather than the Electron triple the block used to show.
+            "runtime": format!("WebKit {}", os_version()),
+            "engine": format!("Rust {}", rust_version()),
             "electron": Value::Null,
             "chromium": Value::Null,
             "node": Value::Null,
@@ -608,4 +612,24 @@ fn merge(target: &mut Value, patch: &Value) {
         }
         (t, p) => *t = p.clone(),
     }
+}
+
+/// The macOS product version, e.g. `14.5`.
+fn os_version() -> String {
+    use std::process::Command;
+    Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// The Rust compiler version the binary was built with.
+fn rust_version() -> &'static str {
+    option_env!("CARGO_PKG_RUST_VERSION")
+        .filter(|v| !v.is_empty())
+        .unwrap_or("stable")
 }

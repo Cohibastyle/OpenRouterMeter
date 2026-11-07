@@ -2343,9 +2343,8 @@ function renderVersion(): HTMLElement {
   add('Widget', version.widget);
   add('Build', version.build);
   add('Commit', version.commit);
-  add('Electron', version.electron);
-  add('Chromium', version.chromium);
-  add('Node.js', version.node);
+  add('Runtime', version.runtime);
+  add('Engine', version.engine);
   add('SQLite', version.sqlite);
   add('Channel', version.channel);
   add('Schema', String(version.schema_version));
