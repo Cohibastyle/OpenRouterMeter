@@ -7,6 +7,7 @@ use std::sync::Mutex;
 
 use serde_json::{json, Value};
 
+use crate::collector::{activity_to_requests, analytics_to_requests, Collector, CollectorErrorCode};
 use crate::credentials::CredentialStore;
 use crate::db::Db;
 
@@ -161,6 +162,120 @@ impl AppState {
     /// Build a snapshot from the stored rows. This is the Phase 3 replacement
     /// for serving the fixture: the numbers now come from SQLite and the Rust
     /// accounting, not from a precomputed JSON file.
+    /// Collect from OpenRouter and store the rows.
+    ///
+    /// Returns the capability probe so the caller can report which endpoints
+    /// answered. An invalid credential is surfaced rather than swallowed: the
+    /// UI must not keep claiming a live connection.
+    pub fn collect(&self) -> Result<Value, String> {
+        let secret = {
+            let guard = self.credential.lock().map_err(|_| "lock_failed".to_string())?;
+            guard.read()
+        };
+        let Some(secret) = secret else {
+            return Err("no_credential".to_string());
+        };
+
+        let collector = Collector::new(secret);
+        let caps = collector.probe_capabilities().map_err(|e| {
+            if e.code == CollectorErrorCode::InvalidCredential {
+                "invalid_credential".to_string()
+            } else {
+                e.message
+            }
+        })?;
+
+        let mut written = 0usize;
+
+        // The analytics endpoint is the live source. Query the three
+        // granularities the windows and charts read, over the ranges they need.
+        if caps["analytics"].as_bool().unwrap_or(false) {
+            let now = now_ms();
+            let key_names = self.key_name_map(&collector);
+
+            let plans: [(&str, i64); 3] = [
+                ("minute", 2 * 3_600_000),
+                ("hour", 24 * 3_600_000),
+                ("day", 30 * 24 * 3_600_000),
+            ];
+
+            for (granularity, span) in plans {
+                let start = crate::accounting::format_time(now - span);
+                let end = crate::accounting::format_time(now);
+                if let Ok(result) = collector.query_analytics(
+                    &["total_usage", "tokens_total", "tokens_prompt", "tokens_completion", "request_count"],
+                    &["model", "api_key_id"],
+                    granularity,
+                    &start,
+                    &end,
+                    Some(1000),
+                ) {
+                    let rows = result["rows"].as_array().cloned().unwrap_or_default();
+                    let requests = analytics_to_requests(&rows, granularity, &key_names);
+                    written += self.store_requests(&requests);
+                }
+            }
+        } else if caps["activity"].as_bool().unwrap_or(false) {
+            // Fallback: daily aggregates only, so the short windows stay
+            // unavailable with reason source_granularity.
+            if let Ok(rows) = collector.fetch_activity() {
+                let requests = activity_to_requests(&rows);
+                written += self.store_requests(&requests);
+            }
+        }
+
+        if caps["keys"].as_bool().unwrap_or(false) {
+            if let Ok(keys) = collector.fetch_keys() {
+                let records: Vec<Value> = keys
+                    .iter()
+                    .map(|k| {
+                        json!({
+                            "id": k["hash"],
+                            "name": k["name"],
+                            "removed": false,
+                            "last4": Value::Null,
+                            "updated_at": crate::accounting::format_time(now_ms()),
+                        })
+                    })
+                    .collect();
+                self.store_keys(&records);
+            }
+        }
+
+        Ok(json!({ "capabilities": caps, "rows_written": written }))
+    }
+
+    fn key_name_map(&self, collector: &Collector) -> std::collections::BTreeMap<String, String> {
+        let mut map = std::collections::BTreeMap::new();
+        if let Ok(keys) = collector.fetch_keys() {
+            for k in keys {
+                if let (Some(name), Some(hash)) = (k["name"].as_str(), k["hash"].as_str()) {
+                    map.insert(name.to_string(), hash.to_string());
+                }
+            }
+        }
+        map
+    }
+
+    fn store_requests(&self, rows: &[Value]) -> usize {
+        let mut guard = match self.db.lock() {
+            Ok(g) => g,
+            Err(_) => return 0,
+        };
+        match guard.as_mut() {
+            Some(db) => db.insert_requests(rows).unwrap_or(0),
+            None => 0,
+        }
+    }
+
+    fn store_keys(&self, rows: &[Value]) {
+        if let Ok(mut guard) = self.db.lock() {
+            if let Some(db) = guard.as_mut() {
+                let _ = db.upsert_keys(rows);
+            }
+        }
+    }
+
     pub fn live_snapshot(&self) -> Value {
         let now = now_ms();
         let requests = self.all_requests();

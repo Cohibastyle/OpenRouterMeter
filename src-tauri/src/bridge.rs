@@ -181,6 +181,10 @@ pub fn app_open_external(app: AppHandle, url: String) -> Value {
 
 #[tauri::command]
 pub fn app_refresh_now(state: State<'_, AppState>) -> Value {
+    // Collect first when a credential is present, then build the snapshot from
+    // whatever is now stored. A collection failure must not blank the UI: the
+    // previous rows stay and the snapshot reports the stale state.
+    let _ = state.collect();
     state.live_snapshot()
 }
 
@@ -202,6 +206,16 @@ pub fn credential_save(state: State<'_, AppState>, secret: String) -> Value {
 #[tauri::command]
 pub fn credential_test(state: State<'_, AppState>) -> Value {
     state.test_credential()
+}
+
+/// Probe the source with the stored credential and report which endpoints
+/// answered. Used by Settings to explain what the key can see.
+#[tauri::command]
+pub fn credential_probe(state: State<'_, AppState>) -> Value {
+    match state.collect() {
+        Ok(result) => json!({ "ok": true, "capabilities": result["capabilities"] }),
+        Err(e) => json!({ "ok": false, "error": e }),
+    }
 }
 
 #[tauri::command]

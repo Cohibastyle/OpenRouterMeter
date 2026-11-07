@@ -1,6 +1,7 @@
 mod accounting;
 mod bridge;
 mod chart;
+mod collector;
 mod credentials;
 mod db;
 mod shell;
@@ -54,6 +55,7 @@ pub fn run() {
             bridge::credential_state,
             bridge::credential_save,
             bridge::credential_test,
+            bridge::credential_probe,
             bridge::credential_disconnect,
             bridge::data_export,
             bridge::data_clear,
@@ -63,3 +65,4 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+

@@ -47,7 +47,7 @@ drift between the two hosts.
 |---|---|---|
 | `src/main/index.ts` | 1,728 | `src-tauri/src/{shell,bridge}.rs` |
 | `src/main/db/database.ts` | 656 | `src-tauri/src/db.rs` (rusqlite) |
-| `src/main/collectors/openrouter.ts` | 471 | not yet ported |
+| `src/main/collectors/openrouter.ts` | 471 | `src-tauri/src/collector.rs` (reqwest) |
 | `src/main/logging/logger.ts` | 184 | not yet ported |
 | `src/main/snapshot.ts` | 126 | `src-tauri/src/snapshot.rs` |
 | `src/main/credentials.ts` | 90 | `src-tauri/src/credentials.rs` (Keychain) |
@@ -80,11 +80,28 @@ Two rendering differences were found and fixed during the port:
   `buildChart` fixed it, including the granularity gate that makes the `10m`
   cell read `–` rather than an interpolated guess.
 
+## Collector
+
+`src-tauri/src/collector.rs` ports the OpenRouter client to `reqwest`. It keeps
+the same endpoint set and the same capability probe, so the UI reports which
+sources answered rather than assuming:
+
+- `/analytics/query` is the primary source. It reports the current day and
+  supports minute, hour, and day granularity, so the short windows are
+  computable.
+- `/activity` is the fallback. It returns daily aggregates only, so the short
+  windows stay unavailable with reason `source_granularity`.
+- `/keys` enables the per-key breakdown; `/credits` and `/key` supply the
+  account totals and the live counter.
+
+Verified against the live API: a rejected credential is classified as
+`invalid_credential` with status 401 rather than surfacing as a generic network
+error.
+
 ## Not yet done
 
-- The OpenRouter collector is not ported, so the Tauri build serves sample data
-  only. `src-tauri/fixtures/` is generated from the real snapshot builder.
 - The structured logger and log rotation are not ported; `logs:*` reads from the
   database but nothing writes to it yet.
 - Diagnostics reports a reduced bundle.
 - No code signing or notarization on either build.
+- The Tauri build has no update check; `app:checkForUpdates` returns `idle`.
