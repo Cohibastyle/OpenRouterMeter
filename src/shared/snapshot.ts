@@ -25,6 +25,15 @@ export interface SnapshotInputs {
   collectionRanges: ReadonlyArray<CollectionRange>;
   retentionHorizon: number | null;
   timeZone: string;
+  /**
+   * Force the UTC offset used for the day and month boundaries, in ms.
+   *
+   * Omitted, the boundaries come from the ambient zone, which is what the app
+   * wants. The cross-check sets it so the fixture does not depend on where it is
+   * generated: a fixture built in one zone and asserted in another disagrees on
+   * `today`, which is exactly how the CI failure surfaced.
+   */
+  utcOffsetMs?: number;
   sample: boolean;
   snapshotVersion: number;
   todaySource: Snapshot['today_source'];
@@ -33,14 +42,30 @@ export interface SnapshotInputs {
   counterMonth: Snapshot['counter_month'];
 }
 
-function startOfLocalDay(now: number): number {
-  const d = new Date(now);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
+/**
+ * The UTC offset to use for a boundary, in ms.
+ *
+ * A forced offset wins so a fixture is reproducible. Otherwise the ambient zone
+ * is read, which is what the app wants: the widget reports in the user's zone.
+ */
+function offsetFor(now: number, forced: number | undefined): number {
+  if (forced !== undefined) return forced;
+  return -new Date(now).getTimezoneOffset() * 60_000;
 }
 
-function startOfLocalMonth(now: number): number {
-  const d = new Date(now);
-  return new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0).getTime();
+function startOfLocalDay(now: number, forced?: number): number {
+  const offset = offsetFor(now, forced);
+  const shifted = now + offset;
+  const day = Math.floor(shifted / 86_400_000) * 86_400_000;
+  return day - offset;
+}
+
+function startOfLocalMonth(now: number, forced?: number): number {
+  const offset = offsetFor(now, forced);
+  const shifted = now + offset;
+  const d = new Date(shifted);
+  const first = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+  return first - offset;
 }
 
 function totalsFor(
@@ -82,12 +107,10 @@ export function buildSnapshot(inputs: SnapshotInputs): Snapshot {
   const scoped =
     scope.kind === 'all' ? inputs.requests : inputs.requests.filter((r) => r.key_id === scope.id);
 
-  const dayStart = startOfLocalDay(inputs.now);
-  const dayEnd = new Date(dayStart);
-  dayEnd.setDate(dayEnd.getDate() + 1);
-  const monthStart = startOfLocalMonth(inputs.now);
-  const monthEnd = new Date(monthStart);
-  monthEnd.setMonth(monthEnd.getMonth() + 1);
+  const dayStart = startOfLocalDay(inputs.now, inputs.utcOffsetMs);
+  const dayEnd = dayStart + 86_400_000;
+  const monthStart = startOfLocalMonth(inputs.now, inputs.utcOffsetMs);
+  const monthEnd = monthStart + 31 * 86_400_000;
 
   const windows = computeWindows({
     now: inputs.now,
@@ -113,8 +136,8 @@ export function buildSnapshot(inputs: SnapshotInputs): Snapshot {
     currency: 'USD',
     time_zone: inputs.timeZone,
     scope: inputs.scope,
-    today: totalsFor(scoped, dayStart, dayEnd.getTime(), inputs.collectionRanges),
-    month: totalsFor(scoped, monthStart, monthEnd.getTime(), inputs.collectionRanges),
+    today: totalsFor(scoped, dayStart, dayEnd, inputs.collectionRanges),
+    month: totalsFor(scoped, monthStart, monthEnd, inputs.collectionRanges),
     today_source: inputs.todaySource,
     month_source: inputs.monthSource,
     counter_today: inputs.counterToday,

@@ -36,6 +36,10 @@ const snapshot = buildSnapshot({
   collectionRanges: [],
   retentionHorizon: null,
   timeZone: 'UTC',
+  // Pinned so the fixture is identical wherever it is generated. Without this
+  // the day and month boundaries come from the ambient zone, so a fixture built
+  // in one zone and asserted in another disagrees on the today total.
+  utcOffsetMs: 0,
   sample: true,
   snapshotVersion: 1,
   todaySource: null,

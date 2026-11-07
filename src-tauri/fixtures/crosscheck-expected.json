@@ -9,22 +9,22 @@
     "kind": "all"
   },
   "today": {
-    "start": "2025-10-08T15:00:00.000Z",
-    "end": "2025-10-09T15:00:00.000Z",
-    "spend_micro": 2224824,
-    "input_tokens": 361825,
-    "output_tokens": 80421,
-    "total_tokens": 442246,
-    "request_count": 72
+    "start": "2025-10-09T00:00:00.000Z",
+    "end": "2025-10-10T00:00:00.000Z",
+    "spend_micro": 1423956,
+    "input_tokens": 227924,
+    "output_tokens": 53810,
+    "total_tokens": 281734,
+    "request_count": 45
   },
   "month": {
-    "start": "2025-09-30T15:00:00.000Z",
-    "end": "2025-10-31T15:00:00.000Z",
-    "spend_micro": 16563445,
-    "input_tokens": 2440447,
-    "output_tokens": 638673,
-    "total_tokens": 3079120,
-    "request_count": 479
+    "start": "2025-10-01T00:00:00.000Z",
+    "end": "2025-11-01T00:00:00.000Z",
+    "spend_micro": 16136161,
+    "input_tokens": 2379719,
+    "output_tokens": 622333,
+    "total_tokens": 3002052,
+    "request_count": 466
   },
   "today_source": null,
   "month_source": null,

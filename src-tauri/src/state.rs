@@ -338,6 +338,9 @@ impl AppState {
             collection_ranges: &[],
             retention_horizon: None,
             time_zone: "UTC".to_string(),
+            // The app reports in the user's zone, so the day and month
+            // boundaries come from the system rather than being forced.
+            utc_offset_ms: None,
             sample,
             snapshot_version: version,
         };
