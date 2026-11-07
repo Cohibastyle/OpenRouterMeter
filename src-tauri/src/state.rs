@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use crate::collector::{activity_to_requests, analytics_to_requests, Collector, CollectorErrorCode};
 use crate::credentials::CredentialStore;
 use crate::db::Db;
+use crate::logging::Logger;
 
 const SNAPSHOT: &str = include_str!("../fixtures/snapshot.json");
 const REQUESTS: &str = include_str!("../fixtures/requests.json");
@@ -21,8 +22,7 @@ pub struct AppState {
     db: Mutex<Option<Db>>,
     data_dir: PathBuf,
     settings: Mutex<Value>,
-    logs: Mutex<Vec<Value>>,
-    tailing: Mutex<bool>,
+    logger: Mutex<Logger>,
     snapshot_version: Mutex<u64>,
     credential: Mutex<CredentialStore>,
 }
@@ -45,6 +45,8 @@ impl AppState {
             }
         };
 
+        let logger = Logger::new(&data_dir.join("logs"));
+
         Self {
             fixtures,
             db: Mutex::new(db),
@@ -52,8 +54,7 @@ impl AppState {
             settings: Mutex::new(
                 serde_json::from_str(SETTINGS).unwrap_or_else(|_| default_settings()),
             ),
-            logs: Mutex::new(Vec::new()),
-            tailing: Mutex::new(false),
+            logger: Mutex::new(logger),
             snapshot_version: Mutex::new(1),
             credential: Mutex::new(CredentialStore::new()),
         }
@@ -91,47 +92,53 @@ impl AppState {
         guard.clone()
     }
 
+    /// Record an entry: redact, buffer, write to the file and the database.
+    ///
+    /// Returns the stored entry so the caller can push it to the view.
+    pub fn log(&self, severity: &'static str, source: &str, message: &str) -> Value {
+        let mut logger = match self.logger.lock() {
+            Ok(l) => l,
+            Err(_) => return Value::Null,
+        };
+        let entry = logger.log(severity, source, message, None, None);
+        if let Ok(db) = self.db.lock() {
+            if let Some(db) = db.as_ref() {
+                logger.append_to_db(db, &entry);
+            }
+        }
+        entry
+    }
+
     pub fn logs(&self) -> Value {
-        self.logs
-            .lock()
-            .map(|l| Value::Array(l.clone()))
-            .unwrap_or_else(|_| Value::Array(Vec::new()))
+        self.logger.lock().map(|l| l.ring()).unwrap_or_else(|_| Value::Array(Vec::new()))
+    }
+
+    pub fn log_query(&self, query: &Value) -> Value {
+        self.logger.lock().map(|l| l.query(query)).unwrap_or_else(|_| Value::Array(Vec::new()))
     }
 
     pub fn set_tailing(&self, on: bool) {
-        if let Ok(mut t) = self.tailing.lock() {
-            *t = on;
+        if let Ok(mut l) = self.logger.lock() {
+            l.set_tailing(on);
         }
     }
 
     pub fn latest_seq(&self) -> i64 {
-        self.logs
-            .lock()
-            .ok()
-            .and_then(|l| l.last().and_then(|e| e["seq"].as_i64()))
-            .unwrap_or(0)
+        self.logger.lock().map(|l| l.latest_seq()).unwrap_or(0)
     }
 
     pub fn clear_log_view(&self) {
-        if let Ok(mut l) = self.logs.lock() {
-            l.clear();
+        if let Ok(mut l) = self.logger.lock() {
+            l.clear_view();
         }
     }
 
     pub fn error_count(&self, since_seq: i64) -> usize {
-        self.logs
-            .lock()
-            .map(|l| {
-                l.iter()
-                    .filter(|e| e["seq"].as_i64().unwrap_or(0) > since_seq)
-                    .filter(|e| e["severity"].as_str() == Some("error"))
-                    .count()
-            })
-            .unwrap_or(0)
+        self.logger.lock().map(|l| l.error_count_since(since_seq)).unwrap_or(0)
     }
 
     pub fn log_dir(&self) -> String {
-        self.data_dir.to_string_lossy().to_string()
+        self.data_dir.join("logs").to_string_lossy().to_string()
     }
 
     pub fn db_path(&self) -> String {
@@ -173,14 +180,17 @@ impl AppState {
             guard.read()
         };
         let Some(secret) = secret else {
+            self.log("warn", "credential", "collection skipped: no credential stored");
             return Err("no_credential".to_string());
         };
 
         let collector = Collector::new(secret);
         let caps = collector.probe_capabilities().map_err(|e| {
             if e.code == CollectorErrorCode::InvalidCredential {
+                self.log("error", "source", "OpenRouter rejected the credential");
                 "invalid_credential".to_string()
             } else {
+                self.log("warn", "source", &format!("capability probe failed: {}", e.message));
                 e.message
             }
         })?;
@@ -241,6 +251,12 @@ impl AppState {
                 self.store_keys(&records);
             }
         }
+
+        self.log(
+            "info",
+            "collector",
+            &format!("collected {written} analytics rows"),
+        );
 
         Ok(json!({ "capabilities": caps, "rows_written": written }))
     }
@@ -411,12 +427,16 @@ impl AppState {
     }
 
     pub fn stored_logs(&self, limit: usize) -> Value {
+        let logger = match self.logger.lock() {
+            Ok(l) => l,
+            Err(_) => return Value::Array(Vec::new()),
+        };
         let guard = match self.db.lock() {
             Ok(g) => g,
             Err(_) => return Value::Array(Vec::new()),
         };
         match guard.as_ref() {
-            Some(db) => Value::Array(db.query_logs(limit)),
+            Some(db) => logger.stored(db, limit),
             None => Value::Array(Vec::new()),
         }
     }

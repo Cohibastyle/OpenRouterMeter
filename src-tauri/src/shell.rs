@@ -42,6 +42,18 @@ pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
         watch_resize(&window);
     }
 
+    // Record the startup entries the Electron build logged, so the Log section
+    // has content from the first launch rather than reading empty.
+    let state = app.state::<AppState>();
+    let version = env!("CARGO_PKG_VERSION");
+    state.log("info", "app", &format!("starting OpenRouter Meter {version} on {}", std::env::consts::OS));
+    let size = app
+        .get_webview_window("main")
+        .and_then(|w| w.inner_size().ok())
+        .map(|s| format!("{}x{}", s.width, s.height))
+        .unwrap_or_else(|| "unknown".to_string());
+    state.log("info", "window", &format!("window shown at {size}"));
+
     Ok(())
 }
 
@@ -250,6 +262,84 @@ pub fn run_capture(app: AppHandle) {
             match status {
                 Ok(s) if s.success() => println!("captured {name} {cw}x{ch} (screen)"),
                 _ => println!("failed {name}"),
+            }
+        }
+
+        // Settings, with a mid-list group expanded, so the scroll-retention and
+        // header-expansion behaviour can be reviewed without a human clicking.
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.set_size(tauri::LogicalSize::new(520.0, 640.0));
+            let _ = window.show();
+            let _ = window.set_focus();
+            std::thread::sleep(std::time::Duration::from_millis(900));
+            let _ = window.eval(
+                "(() => {
+                   const tab = [...document.querySelectorAll('#tabbar button')]
+                     .find((b) => /Settings/i.test(b.textContent || ''));
+                   tab?.click();
+                 })()",
+            );
+            std::thread::sleep(std::time::Duration::from_millis(900));
+            let _ = window.eval(
+                "(() => {
+                   const heads = [...document.querySelectorAll('.group-header')];
+                   const target = heads.find((h) => /Version/i.test(h.textContent || ''));
+                   target?.click();
+                 })()",
+            );
+            std::thread::sleep(std::time::Duration::from_millis(900));
+            // The Log group, to prove the logger writes entries the panel reads.
+            // Collapse the groups above it first so it is on screen: the capture
+            // is a bitmap of the window, so an off-screen panel cannot be seen.
+            let _ = window.eval(
+                "(() => {
+                   const heads = () => [...document.querySelectorAll('.group-header')];
+                   for (const h of heads()) {
+                     const t = (h.textContent || '').trim();
+                     if ((t.startsWith('API key') || t.startsWith('Version')) &&
+                         h.getAttribute('aria-expanded') === 'true') {
+                       h.click();
+                     }
+                   }
+                 })()",
+            );
+            std::thread::sleep(std::time::Duration::from_millis(900));
+            let _ = window.eval(
+                "(() => {
+                   const target = [...document.querySelectorAll('.group-header')]
+                     .find((h) => (h.textContent || '').trim().startsWith('Log'));
+                   if (target && target.getAttribute('aria-expanded') === 'false') target.click();
+                 })()",
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1400));
+            let log_path = out_dir.join("06-settings-log.png");
+            for _ in 0..6 {
+                if let crate::capture::Capture::Painted = crate::capture::capture_window(&window, &log_path) {
+                    println!("captured 06-settings-log");
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(400));
+            }
+            let path = out_dir.join("05-settings-version-expanded.png");
+            let mut done = false;
+            for attempt in 0..8 {
+                match crate::capture::capture_window(&window, &path) {
+                    crate::capture::Capture::Painted => {
+                        println!("captured 05-settings-version-expanded");
+                        done = true;
+                        break;
+                    }
+                    crate::capture::Capture::Blank => {
+                        std::thread::sleep(std::time::Duration::from_millis(400));
+                    }
+                    crate::capture::Capture::Failed => {
+                        println!("failed 05-settings-version-expanded (capture failed, attempt {attempt})");
+                        break;
+                    }
+                }
+            }
+            if !done {
+                println!("warning 05-settings-version-expanded not painted");
             }
         }
 

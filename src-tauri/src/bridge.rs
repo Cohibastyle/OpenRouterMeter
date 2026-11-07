@@ -5,7 +5,7 @@
 //! credential ones; the shape of this file does not change.
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::state::AppState;
 
@@ -108,13 +108,18 @@ pub fn settings_reset(state: State<'_, AppState>, group: String) -> Value {
 
 #[tauri::command]
 pub fn logs_query(state: State<'_, AppState>, query: Value) -> Value {
-    let limit = query["limit"].as_u64().unwrap_or(200) as usize;
-    let stored = state.stored_logs(limit);
-    if stored.as_array().map(|a| a.is_empty()).unwrap_or(true) {
-        state.logs()
-    } else {
-        stored
+    // The ring is authoritative for the live view: it is populated from startup,
+    // whereas the database only holds what has been written since. The database
+    // is still the fallback so a quiet restart shows the previous run.
+    let live = state.log_query(&query);
+    if live.as_array().map(|a| a.is_empty()).unwrap_or(true) {
+        let limit = query["limit"].as_u64().unwrap_or(200) as usize;
+        let stored = state.stored_logs(limit);
+        if stored.as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+            return stored;
+        }
     }
+    live
 }
 
 #[tauri::command]
@@ -169,8 +174,26 @@ pub fn app_version(state: State<'_, AppState>) -> Value {
 }
 
 #[tauri::command]
-pub fn app_check_for_updates() -> Value {
-    json!({ "state": "idle", "checked_at": chrono_now() })
+pub fn app_check_for_updates(state: State<'_, AppState>) -> Value {
+    let result = crate::update::check();
+    match result["state"].as_str() {
+        Some("available") => state.log(
+            "info",
+            "update",
+            &format!(
+                "update available: {} (running {})",
+                result["latest"].as_str().unwrap_or("?"),
+                result["current"].as_str().unwrap_or("?")
+            ),
+        ),
+        Some("failed") => state.log(
+            "warn",
+            "update",
+            &format!("update check failed: {}", result["error"].as_str().unwrap_or("unknown")),
+        ),
+        _ => state.log("debug", "update", "update check: up to date"),
+    };
+    result
 }
 
 #[tauri::command]
@@ -180,12 +203,28 @@ pub fn app_open_external(app: AppHandle, url: String) -> Value {
 }
 
 #[tauri::command]
-pub fn app_refresh_now(state: State<'_, AppState>) -> Value {
+pub fn app_refresh_now(state: State<'_, AppState>, app: AppHandle) -> Value {
     // Collect first when a credential is present, then build the snapshot from
     // whatever is now stored. A collection failure must not blank the UI: the
     // previous rows stay and the snapshot reports the stale state.
     let _ = state.collect();
+    emit_new_logs(&app, &state);
     state.live_snapshot()
+}
+
+/// Push any entries the view has not seen yet, so the Log panel tails live.
+///
+/// The renderer subscribes to `logs:entry`; without this the buffer fills but
+/// nothing ever reaches the panel until it is reopened.
+fn emit_new_logs(app: &AppHandle, state: &AppState) {
+    let entries = state.logs();
+    let Some(list) = entries.as_array() else { return };
+    let latest = state.latest_seq();
+    for entry in list.iter().rev().take(8) {
+        if entry["seq"].as_i64().unwrap_or(0) > latest - 8 {
+            let _ = app.emit("logs:entry", entry.clone());
+        }
+    }
 }
 
 #[tauri::command]

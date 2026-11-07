@@ -5,9 +5,11 @@ mod chart;
 mod collector;
 mod credentials;
 mod db;
+mod logging;
 mod shell;
 mod snapshot;
 mod state;
+mod update;
 
 pub fn run() {
     let capture = std::env::args().any(|a| a == "--capture");
