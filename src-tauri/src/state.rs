@@ -214,6 +214,29 @@ impl AppState {
         crate::snapshot::build_snapshot(&inputs)
     }
 
+    /// Build chart data from the stored rows for the requested range.
+    pub fn live_chart(&self, params: &Value) -> Value {
+        let now = now_ms();
+        let requests = self.all_requests();
+        let settings = self.settings();
+
+        let metric = params["metric"].as_str().unwrap_or("spend").to_string();
+        let scale = params["scale"].as_str().unwrap_or("24h").to_string();
+        let anchor = params["anchor"].as_i64().unwrap_or(now);
+        let axis = settings["display"]["chart_axis"].as_str().unwrap_or("log").to_string();
+
+        crate::chart::build_chart(&crate::chart::ChartRequest {
+            metric,
+            scale,
+            anchor,
+            axis,
+            requests: &requests,
+            collection_ranges: &[],
+            sample: self.has_sample_rows(),
+            now,
+        })
+    }
+
     fn all_requests(&self) -> Vec<Value> {
         let guard = match self.db.lock() {
             Ok(g) => g,
@@ -318,13 +341,21 @@ impl AppState {
     }
 
     pub fn version_info(&self) -> Value {
+        // The renderer reads `widget` for the title and the rest for the
+        // Settings version block, so every field must be present.
         json!({
-            "app": env!("CARGO_PKG_VERSION"),
+            "widget": env!("CARGO_PKG_VERSION"),
+            "build": "tauri",
+            "commit": "local",
             "electron": Value::Null,
-            "tauri": tauri::VERSION,
+            "chromium": Value::Null,
             "node": Value::Null,
-            "sqlite": Value::Null,
-            "schema": 1,
+            "sqlite": rusqlite::version(),
+            "channel": "stable",
+            "schema_version": 3,
+            "last_migration": Value::Null,
+            "update_state": "idle",
+            "last_check": Value::Null,
         })
     }
 

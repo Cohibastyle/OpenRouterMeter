@@ -16,6 +16,14 @@ use crate::state::AppState;
 const DEFAULT_WIDTH: f64 = 320.0;
 const DEFAULT_HEIGHT: f64 = 240.0;
 
+/// Sizes the Electron `--capture` mode renders, so the two sets can be diffed.
+pub const CAPTURE_SIZES: &[(&str, f64, f64)] = &[
+    ("01-spending-micro-180x120", 180.0, 120.0),
+    ("02-spending-compact-320x240", 320.0, 240.0),
+    ("03-spending-standard-480x360", 480.0, 360.0),
+    ("04-spending-expanded-900x560", 900.0, 560.0),
+];
+
 pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState::new();
     state.seed_if_empty();
@@ -31,9 +39,27 @@ pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(window) = app.get_webview_window("main") {
         apply_always_on_top(&window, "normal");
         let _ = window.show();
+        watch_resize(&window);
     }
 
     Ok(())
+}
+
+/// Push `window:layout` on every resize, the way the Electron main process does.
+///
+/// The renderer reflows from this event. Without it the layout is whatever it
+/// was at first paint, so a window dragged wider keeps the icon rail it had when
+/// it was narrow.
+fn watch_resize(window: &WebviewWindow) {
+    let handle = window.clone();
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::Resized(size) = event {
+            let scale = handle.scale_factor().unwrap_or(1.0);
+            let width = size.width as f64 / scale;
+            let height = size.height as f64 / scale;
+            let _ = handle.emit("window:layout", layout_for(width, height));
+        }
+    });
 }
 
 fn build_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
@@ -153,6 +179,51 @@ pub fn apply_always_on_top(window: &WebviewWindow, level: &str) {
     {
         let _ = window.set_visible_on_all_workspaces(on);
     }
+}
+
+/// Render each size class to a PNG, mirroring the Electron `--capture` mode.
+///
+/// Tauri has no webview snapshot API, so this uses `screencapture -R` against the
+/// window's own rectangle. The renderer paints an opaque background, so the
+/// capture is the widget and not the desktop behind it.
+pub fn run_capture(app: AppHandle) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(2500));
+
+        let out_dir = std::env::temp_dir().join("ormeter-tauri-captures");
+        let _ = std::fs::create_dir_all(&out_dir);
+
+        for (name, w, h) in CAPTURE_SIZES {
+            let Some(window) = app.get_webview_window("main") else { return };
+            let _ = window.set_size(tauri::LogicalSize::new(*w, *h));
+            std::thread::sleep(std::time::Duration::from_millis(900));
+
+            let scale = window.scale_factor().unwrap_or(1.0);
+            let pos = window.outer_position().unwrap_or_default();
+            let size = window.inner_size().unwrap_or_default();
+
+            // screencapture -R takes points, so divide the physical pixels back
+            // down by the display scale factor.
+            let x = pos.x as f64 / scale;
+            let y = pos.y as f64 / scale;
+            let cw = size.width as f64 / scale;
+            let ch = size.height as f64 / scale;
+
+            let path = out_dir.join(format!("{name}.png"));
+            let rect = format!("{x},{y},{cw},{ch}");
+            let status = std::process::Command::new("screencapture")
+                .args(["-x", "-o", "-R", &rect, &path.to_string_lossy()])
+                .status();
+
+            match status {
+                Ok(s) if s.success() => println!("captured {name} {cw}x{ch}"),
+                _ => println!("failed {name}"),
+            }
+        }
+
+        println!("captures written to {}", out_dir.display());
+        app.exit(0);
+    });
 }
 
 pub fn window_state(app: &AppHandle, state: &AppState) -> Value {

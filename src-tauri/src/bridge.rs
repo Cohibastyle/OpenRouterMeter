@@ -35,8 +35,7 @@ pub fn summary_get(state: State<'_, AppState>, metric: String) -> Value {
 
 #[tauri::command]
 pub fn charts_get(state: State<'_, AppState>, params: Value) -> Value {
-    let _ = params;
-    fixture(&state, "chart")
+    state.live_chart(&params)
 }
 
 #[tauri::command]

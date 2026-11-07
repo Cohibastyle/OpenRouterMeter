@@ -1,5 +1,6 @@
 mod accounting;
 mod bridge;
+mod chart;
 mod credentials;
 mod db;
 mod shell;
@@ -7,11 +8,16 @@ mod snapshot;
 mod state;
 
 pub fn run() {
+    let capture = std::env::args().any(|a| a == "--capture");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
+        .setup(move |app| {
             shell::setup(app)?;
+            if capture {
+                shell::run_capture(app.handle().clone());
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
