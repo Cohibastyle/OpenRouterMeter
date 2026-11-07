@@ -216,7 +216,7 @@ pub fn app_refresh_now(state: State<'_, AppState>, app: AppHandle) -> Value {
 ///
 /// The renderer subscribes to `logs:entry`; without this the buffer fills but
 /// nothing ever reaches the panel until it is reopened.
-fn emit_new_logs(app: &AppHandle, state: &AppState) {
+pub(crate) fn emit_new_logs(app: &AppHandle, state: &AppState) {
     let entries = state.logs();
     let Some(list) = entries.as_array() else { return };
     let latest = state.latest_seq();
@@ -229,6 +229,7 @@ fn emit_new_logs(app: &AppHandle, state: &AppState) {
 
 #[tauri::command]
 pub fn app_quit(app: AppHandle) {
+    crate::shell::stop_refresh(&app);
     app.exit(0);
 }
 

@@ -250,6 +250,10 @@ pub fn compute_windows(inputs: &WindowInputs<'_>) -> Vec<Value> {
             let input = sum_or_none(in_window.iter().map(|r| r["input_tokens"].as_i64()));
             let output = sum_or_none(in_window.iter().map(|r| r["output_tokens"].as_i64()));
             let total = sum_or_none(in_window.iter().map(|r| r["total_tokens"].as_i64()));
+            // The source's own count, not the number of rows: a row is an
+            // aggregate, so counting rows undercounts and makes the figure
+            // depend on which granularity the window selected.
+            let requests = sum_or_none(in_window.iter().map(|r| r["request_count"].as_i64()));
 
             let reason = partial_reason_for(window_start, inputs);
             let coverage = if reason.is_some() { "partial" } else { "full" };
@@ -258,7 +262,7 @@ pub fn compute_windows(inputs: &WindowInputs<'_>) -> Vec<Value> {
             cell["input_tokens"] = json!(input);
             cell["output_tokens"] = json!(output);
             cell["total_tokens"] = json!(total);
-            cell["request_count"] = json!(in_window.len());
+            cell["request_count"] = json!(requests);
             cell["coverage"] = json!(coverage);
             cell["partial_reason"] = json!(reason);
             cell
@@ -316,6 +320,9 @@ pub fn period_totals(
     let input = sum_or_none(in_range.iter().map(|r| r["input_tokens"].as_i64()));
     let output = sum_or_none(in_range.iter().map(|r| r["output_tokens"].as_i64()));
     let total = sum_or_none(in_range.iter().map(|r| r["total_tokens"].as_i64()));
+    // The source's own count, not the row count: a row is an aggregate, so
+    // counting rows undercounts and varies with the selected granularity.
+    let requests = sum_or_none(in_range.iter().map(|r| r["request_count"].as_i64()));
 
     json!({
         "start": format_time(start),
@@ -324,7 +331,7 @@ pub fn period_totals(
         "input_tokens": input,
         "output_tokens": output,
         "total_tokens": total,
-        "request_count": in_range.len(),
+        "request_count": requests,
     })
 }
 
@@ -366,5 +373,85 @@ mod tests {
         let cells = compute_windows(&inputs);
         assert_eq!(cells[0]["coverage"], "unavailable");
         assert_eq!(cells[0]["partial_reason"], "source_granularity");
+    }
+
+    fn aggregate_row(event_time: i64, requests: i64) -> Value {
+        json!({
+            "event_time": format_time(event_time),
+            "cost_micro": 1_000_000,
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "total_tokens": 15,
+            "request_count": requests,
+            "source": "openrouter.analytics.minute",
+        })
+    }
+
+    #[test]
+    fn a_window_sums_the_source_request_count_not_the_row_count() {
+        // The bug: request_count was the row count. A row is an aggregate, so a
+        // minute bucket holding 40 requests counted as one, and because the
+        // collector stores the same period at minute, hour, and day granularity
+        // the figure also changed with whichever granularity the window
+        // selected. That is how the 1-hour count could read higher than the
+        // 24-hour one.
+        let now = 1_760_000_000_000;
+        let rows = vec![
+            aggregate_row(now - 5 * MINUTE, 40),
+            aggregate_row(now - 15 * MINUTE, 25),
+            aggregate_row(now - 2 * HOUR, 300),
+        ];
+        let inputs = WindowInputs {
+            now,
+            requests: &rows,
+            source_granularity_ms: MINUTE,
+            collection_started_at: None,
+            gaps: &[],
+            retention_horizon: None,
+            collection_ranges: &[],
+        };
+        let cells = compute_windows(&inputs);
+        let one_hour = cells.iter().find(|c| c["key"] == "1h").unwrap();
+        let day = cells.iter().find(|c| c["key"] == "24h").unwrap();
+
+        assert_eq!(one_hour["request_count"], 65, "40 + 25 requests inside the hour");
+        assert_eq!(day["request_count"], 365, "every request inside the day");
+        assert!(
+            day["request_count"].as_i64() > one_hour["request_count"].as_i64(),
+            "the 24-hour count must always exceed the 1-hour count"
+        );
+    }
+
+    #[test]
+    fn a_window_with_no_reported_count_stays_null() {
+        // Counting rows here would report 2 requests for a source that never
+        // said how many there were, which is a guess dressed as a measurement.
+        let now = 1_760_000_000_000;
+        let rows = vec![
+            json!({
+                "event_time": format_time(now - 5 * MINUTE),
+                "cost_micro": 1_000_000,
+                "request_count": Value::Null,
+                "source": "openrouter.analytics.minute",
+            }),
+            json!({
+                "event_time": format_time(now - 10 * MINUTE),
+                "cost_micro": 1_000_000,
+                "request_count": Value::Null,
+                "source": "openrouter.analytics.minute",
+            }),
+        ];
+        let inputs = WindowInputs {
+            now,
+            requests: &rows,
+            source_granularity_ms: MINUTE,
+            collection_started_at: None,
+            gaps: &[],
+            retention_horizon: None,
+            collection_ranges: &[],
+        };
+        let cells = compute_windows(&inputs);
+        let one_hour = cells.iter().find(|c| c["key"] == "1h").unwrap();
+        assert_eq!(one_hour["request_count"], Value::Null);
     }
 }

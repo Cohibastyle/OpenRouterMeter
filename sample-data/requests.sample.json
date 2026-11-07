@@ -11,7 +11,8 @@
     "output_tokens": 2529,
     "total_tokens": 10392,
     "cost_micro": 61524,
-    "source": "sample"
+    "source": "sample",
+    "request_count": 1
   },
   {
     "id": "sample:1793911243:11",
@@ -25,7 +26,8 @@
     "output_tokens": 135,
     "total_tokens": 5630,
     "cost_micro": 18510,
-    "source": "sample"
+    "source": "sample",
+    "request_count": 1
   },
   {
     "id": "sample:1793905843:9",
@@ -39,7 +41,8 @@
     "output_tokens": 2269,
     "total_tokens": 6437,
     "cost_micro": 46539,
-    "source": "sample"
+    "source": "sample",
+    "request_count": 1
   },
   {
     "id": "sample:1793892823:2",
@@ -53,7 +56,8 @@
     "output_tokens": 1346,
     "total_tokens": 4552,
     "cost_micro": 29808,
-    "source": "sample"
+    "source": "sample",
+    "request_count": 1
   },
   {
     "id": "sample:1793884663:6",
@@ -67,7 +71,8 @@
     "output_tokens": 936,
     "total_tokens": 8467,
     "cost_micro": 36633,
-    "source": "sample"
+    "source": "sample",
+    "request_count": 1
   },
   {
     "id": "sample:1793880283:7",
@@ -81,7 +86,8 @@
     "output_tokens": 1927,
     "total_tokens": 2850,
     "cost_micro": 31674,
-    "source": "sample"
+    "source": "sample",
+    "request_count": 1
   },
   {
     "id": "sample:1793879323:1",
@@ -95,7 +101,8 @@
     "output_tokens": 182,
     "total_tokens": 772,
     "cost_micro": 4500,
-    "source": "sample"
+    "source": "sample",
+    "request_count": 1
   },
   {
     "id": "sample:1793877583:3",
@@ -109,7 +116,8 @@
     "output_tokens": 102,
     "total_tokens": 8795,
     "cost_micro": 27609,
-    "source": "sample"
+    "source": "sample",
+    "request_count": 1
   },
   {
     "id": "sample:1793867983:5",
@@ -123,7 +131,8 @@
     "output_tokens": 1776,
     "total_tokens": 4776,
     "cost_micro": 35640,
-    "source": "sample"
+    "source": "sample",
+    "request_count": 1
   },
   {
     "id": "sample:1793857483:4",
@@ -137,7 +146,8 @@
     "output_tokens": 372,
     "total_tokens": 4066,
     "cost_micro": 16662,
-    "source": "sample"
+    "source": "sample",
+    "request_count": 1
   },
   {
     "id": "sample:1793842903:8",
@@ -151,7 +161,8 @@
     "output_tokens": 1556,
     "total_tokens": 5134,
     "cost_micro": 34074,
-    "source": "sample"
+    "source": "sample",
+    "request_count": 1
   },
   {
     "id": "sample:1793839543:0",
@@ -165,6 +176,7 @@
     "output_tokens": 1042,
     "total_tokens": 3630,
     "cost_micro": 23394,
-    "source": "sample"
+    "source": "sample",
+    "request_count": 1
   }
 ]

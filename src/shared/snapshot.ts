@@ -1,5 +1,5 @@
 import { SCHEMA_VERSION } from './constants.js';
-import { sumMicro } from './money.js';
+import { sumIntOrNull, sumMicro } from './money.js';
 import { computeWindows } from './windows.js';
 import { selectGranularity, type CollectionRange } from './granularity.js';
 import type {
@@ -63,6 +63,9 @@ function totalsFor(
   const input = sumMicro(inRange.map((r) => r.input_tokens));
   const output = sumMicro(inRange.map((r) => r.output_tokens));
   const total = sumMicro(inRange.map((r) => r.total_tokens));
+  // The source's own count, not the row count: a row is an aggregate, so
+  // counting rows undercounts and varies with the selected granularity.
+  const requestCount = sumIntOrNull(inRange.map((r) => r.request_count));
   return {
     start: new Date(start).toISOString(),
     end: new Date(end).toISOString(),
@@ -70,7 +73,7 @@ function totalsFor(
     input_tokens: inRange.length === 0 ? null : input,
     output_tokens: inRange.length === 0 ? null : output,
     total_tokens: inRange.length === 0 ? null : total,
-    request_count: inRange.length,
+    request_count: requestCount,
   };
 }
 

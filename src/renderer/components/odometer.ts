@@ -261,6 +261,7 @@ export function animateHeadline(
   to: number,
   format: (value: number) => string,
   windowMs: number,
+  onDone?: () => void,
 ): void {
   const fromText = format(from);
   const toText = format(to);
@@ -268,6 +269,7 @@ export function animateHeadline(
 
   if (fromText === toText || !motionAllowed() || windowMs <= 0) {
     element.textContent = toText;
+    onDone?.();
     return;
   }
 
@@ -275,13 +277,14 @@ export function animateHeadline(
   // as a second event, and a backwards roll has no forward pass to make.
   if (compareDigits(fromText, toText) < 0) {
     element.textContent = toText;
+    onDone?.();
     return;
   }
 
   const plan = planRoll(fromText, toText, windowMs);
   const built = plan ? buildColumns(fromText, toText) : null;
   if (!plan || !built) {
-    countUp(element, from, to, format, windowMs);
+    countUp(element, from, to, format, windowMs, onDone);
     return;
   }
 
@@ -304,7 +307,10 @@ export function animateHeadline(
       column.strip.style.transform = translateFor(roll.from + roll.steps * easeOutCubic(progress));
     }
     if (elapsed < plan.durationMs) requestAnimationFrame(frame);
-    else element.textContent = toText;
+    else {
+      element.textContent = toText;
+      onDone?.();
+    }
   };
   requestAnimationFrame(frame);
 }
@@ -316,13 +322,17 @@ function countUp(
   to: number,
   format: (value: number) => string,
   durationMs: number,
+  onDone?: () => void,
 ): void {
   const start = performance.now();
   const frame = (now: number) => {
     const t = Math.min(1, (now - start) / durationMs);
     element.textContent = format(from + (to - from) * easeOutCubic(t));
     if (t < 1) requestAnimationFrame(frame);
-    else element.textContent = format(to);
+    else {
+      element.textContent = format(to);
+      onDone?.();
+    }
   };
   requestAnimationFrame(frame);
 }

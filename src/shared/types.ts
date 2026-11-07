@@ -64,6 +64,17 @@ export interface RequestRecord {
   output_tokens: number | null;
   total_tokens: number | null;
   cost_micro: number | null;
+  /**
+   * Requests the source reported for this row.
+   *
+   * A row is an aggregate, not one request: a minute bucket for one model on one
+   * key can hold dozens. Counting rows therefore undercounts, and because the
+   * collector stores the same period at minute, hour, and day granularity the
+   * row count also changes with the granularity a window happens to select —
+   * which is how a 1-hour count could exceed the 24-hour one. Null when the
+   * source did not report a count.
+   */
+  request_count: number | null;
   source: string;
 }
 

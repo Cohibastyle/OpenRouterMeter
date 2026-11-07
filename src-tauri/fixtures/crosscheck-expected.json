@@ -42,6 +42,7 @@
     "output_tokens": 893,
     "total_tokens": 1718,
     "cost_micro": 15870,
+    "request_count": 1,
     "source": "sample"
   },
   "coverage": {

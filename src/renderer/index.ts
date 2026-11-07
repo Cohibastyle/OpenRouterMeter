@@ -29,6 +29,7 @@ import {
   formatTokensExact,
 } from '../shared/format.js';
 import { TAB_LABELS, TABS, WINDOWS } from '../shared/constants.js';
+import { headlineDelta, requestsBetween } from '../shared/delta.js';
 import { clear, debounce, el, ICONS, icon } from './components/dom.js';
 import { helpFor } from './settingsHelp.js';
 import { SummaryStrip } from './components/strip.js';
@@ -54,12 +55,40 @@ const INCREASE_FADE_MS = 400;
 /** Space between a stacked headline and the chip under it; matches app.css. */
 const STACKED_CHIP_GAP = 2;
 
-/** The most recent rise in a headline value, and the interval it belongs to. */
-interface Increase {
+/** The most recent change in a headline value, and the interval it belongs to. */
+interface Delta {
+  /** Size of the change, always positive; `direction` says which way it went. */
   amount: number;
+  direction: 'up' | 'down';
   requests: number | null;
   at: number;
   key: ChartScale;
+  /**
+   * When the chip was first drawn for this change, or null while it has not been
+   * drawn yet.
+   *
+   * The invert flash is anchored here rather than at `at`, so a change that
+   * arrives while another tab is showing still flashes when the user opens the
+   * tab. Anchoring it at `at` meant the flash had already expired by the time
+   * the chip was first seen, which is why it only sometimes inverted.
+   */
+  flashAt: number | null;
+}
+
+/**
+ * A headline roll in flight.
+ *
+ * Stored as a time window rather than as a live animation handle, because the
+ * view is rebuilt on every snapshot: the element the animation was running on is
+ * discarded, and a rebuilt one has to resume from where the old one had got to.
+ * Without this a refresh landing mid-roll snapped the number to its target and
+ * the roll was never seen.
+ */
+interface Roll {
+  from: number;
+  to: number;
+  startedAt: number;
+  durationMs: number;
 }
 
 interface HeadlineValues {
@@ -78,6 +107,15 @@ interface AppState {
   chartMetric: Metric;
   chartScale: ChartScale;
   chartAnchor: number;
+  /**
+   * True once the user has paged back from the live edge.
+   *
+   * While false the chart follows the clock: every refresh re-anchors it to now,
+   * so the window slides across the x axis instead of freezing at whatever
+   * instant the view happened to open. Paging back pins it, because a chart the
+   * user deliberately moved to a past period must not drift away from it.
+   */
+  chartPinned: boolean;
   chartData: ChartData | null;
   requests: RequestRecord[];
   keys: Array<KeyRecord & { spend_24h_micro: number; tokens_24h: number; requests_24h: number }>;
@@ -105,8 +143,10 @@ interface AppState {
   headline: HeadlineValues | null;
   /** Value currently painted in each headline, used as the roll's start point. */
   displayed: Record<Metric, number | null>;
-  /** Most recent rise per metric, shown beside the headline. */
-  increases: Record<Metric, Increase | null>;
+  /** The roll in flight per metric, so a rebuilt headline can resume it. */
+  rolls: Record<Metric, Roll | null>;
+  /** Most recent change per metric, shown beside the headline. */
+  deltas: Record<Metric, Delta | null>;
   /** Scroll offset of the Settings pane, restored after it is rebuilt. */
   settingsScroll: number;
 }
@@ -133,6 +173,7 @@ const state: AppState = {
   chartMetric: 'spend',
   chartScale: '24h',
   chartAnchor: Date.now(),
+  chartPinned: false,
   chartData: null,
   requests: [],
   keys: [],
@@ -151,7 +192,8 @@ const state: AppState = {
   notice: null,
   headline: null,
   displayed: { spend: null, tokens: null },
-  increases: { spend: null, tokens: null },
+  rolls: { spend: null, tokens: null },
+  deltas: { spend: null, tokens: null },
   settingsScroll: 0,
 };
 
@@ -226,7 +268,11 @@ async function boot(): Promise<void> {
   tabUnsubscribe = api.view.onTab((tab) => activateTab(tab));
 
   chartInvalidateUnsubscribe = api.charts.onInvalidate(() => {
-    if (state.subview === 'charts') void loadChart();
+    if (state.subview !== 'charts') return;
+    // Re-render as well as reload: the period label and the axis both move when
+    // the chart follows the clock, so a bare setData would leave the header
+    // naming the previous window.
+    void loadChart().then(() => render());
   });
 
   logEntryUnsubscribe = api.logs.onEntry((entry) => {
@@ -465,22 +511,26 @@ function onKeyDown(event: KeyboardEvent): void {
 /* ------------------------------------------------------------------ */
 
 function handleSnapshot(next: Snapshot): void {
-  trackIncrease(next);
+  trackDelta(next);
   state.snapshot = next;
 
   if (state.tab === 'requests') void loadBreakdown();
   if (state.tab === 'api') void loadKeys();
+  // The chart follows the clock, so it is re-fetched on every snapshot rather
+  // than only on the slower chart timer. That is what makes the window slide
+  // across the x axis instead of jumping once a minute.
+  if (state.subview === 'charts' || state.layout.showChart) void loadChart();
   render();
 }
 
 /**
- * Record how much the headline rose since the previous snapshot.
+ * Record how much the headline moved since the previous snapshot.
  *
  * The chip describes a refresh-to-refresh delta, so it is only meaningful while
  * the same interval stays selected: switching ranges rebases the baseline
  * instead of reporting the difference between two different periods.
  */
-function trackIncrease(next: Snapshot): void {
+function trackDelta(next: Snapshot): void {
   const key = state.chartScale;
   const cell = next.windows.find((w) => w.key === key) ?? null;
   const current: HeadlineValues = {
@@ -496,49 +546,49 @@ function trackIncrease(next: Snapshot): void {
     // repainted rather than rolled from the old range's total.
     state.displayed.spend = null;
     state.displayed.tokens = null;
+    state.rolls.spend = null;
+    state.rolls.tokens = null;
   }
 
   if (previous && previous.key === key) {
     const at = Date.now();
-    // The chip reports the requests that arrived with this rise, not the
+    // The chip reports the requests that arrived with this change, not the
     // interval total, which the sub-line under the headline already states.
-    const requests =
-      previous.requests === null || current.requests === null
-        ? null
-        : Math.max(0, current.requests - previous.requests);
-    const spendRise = rise(previous.spend, current.spend);
-    if (spendRise !== null) {
-      state.increases.spend = { amount: spendRise, requests, at, key };
-    }
-    const tokenRise = rise(previous.tokens, current.tokens);
-    if (tokenRise !== null) {
-      state.increases.tokens = { amount: tokenRise, requests, at, key };
-    }
+    const requests = requestsBetween(previous.requests, current.requests);
+    recordDelta('spend', previous.spend, current.spend, requests, at, key);
+    recordDelta('tokens', previous.tokens, current.tokens, requests, at, key);
   }
 
   state.headline = current;
 }
 
-/** The increase between two readings, or null when the value did not rise. */
-function rise(previous: number | null, current: number | null): number | null {
-  if (previous === null || current === null) return null;
-  const delta = current - previous;
-  return delta > 0 ? delta : null;
+/** Store a change in one headline value, in either direction. */
+function recordDelta(
+  metric: Metric,
+  previous: number | null,
+  current: number | null,
+  requests: number | null,
+  at: number,
+  key: ChartScale,
+): void {
+  const change = headlineDelta(previous, current, requests);
+  if (change === null) return;
+  state.deltas[metric] = { ...change, at, key, flashAt: null };
 }
 
 /**
- * Drop an increase once it has faded, so a stale chip cannot reappear.
+ * Drop a delta once it has faded, so a stale chip cannot reappear.
  *
- * `at` identifies the rise the timer was started for: a newer rise replaces the
- * state entry, and its own timer must not be cancelled by the older one. The
+ * `at` identifies the change the timer was started for: a newer change replaces
+ * the state entry, and its own timer must not be cancelled by the older one. The
  * chip is removed from the DOM directly rather than by re-rendering, because a
  * fade should not rebuild the chart underneath it.
  */
-function expireIncrease(metric: Metric, at: number, chip: HTMLElement): void {
-  const increase = state.increases[metric];
-  if (!increase || increase.at !== at) return;
-  if (Date.now() - increase.at < INCREASE_TTL_MS) return;
-  state.increases[metric] = null;
+function expireDelta(metric: Metric, at: number, chip: HTMLElement): void {
+  const entry = state.deltas[metric];
+  if (!entry || entry.at !== at) return;
+  if (Date.now() - entry.at < INCREASE_TTL_MS) return;
+  state.deltas[metric] = null;
   // The chip's slot stays in the row and keeps its height, so the headline is
   // not re-fitted and the number does not move when the chip expires.
   chip.remove();
@@ -569,6 +619,10 @@ async function loadLogs(): Promise<void> {
 
 async function loadChart(): Promise<void> {
   const keyId = state.settings?.view.scope.kind === 'key' ? state.settings.view.scope.id : null;
+  // While the chart is not pinned it follows the clock, so the window slides
+  // across the x axis on every refresh instead of freezing at the instant the
+  // view opened.
+  if (!state.chartPinned) state.chartAnchor = Date.now();
   state.chartData = await api.charts.get({
     metric: state.chartMetric,
     scale: state.chartScale,
@@ -786,6 +840,7 @@ function buildStrip(metric: Metric): SummaryStrip {
       state.chartMetric = metric;
       state.chartScale = cell.key;
       state.chartAnchor = Date.now();
+      state.chartPinned = false;
       if (state.tab === 'models') {
         void loadBreakdown().then(() => render());
       } else {
@@ -823,6 +878,10 @@ function renderInlineChart(metric: Metric): HTMLElement {
   wrap.appendChild(chartWrap);
 
   chartRenderer = new ChartRenderer(chartWrap, { metric });
+  // The inline chart follows the clock too, so it slides with the tab rather
+  // than freezing at the instant the tab was first drawn. A pinned chart is the
+  // exception: the user moved it to a past period on purpose.
+  if (!state.chartPinned) state.chartAnchor = Date.now();
   if (state.chartData && state.chartData.metric === metric && state.chartData.scale === state.chartScale) {
     chartRenderer.setData(state.chartData);
   } else {
@@ -977,7 +1036,7 @@ function renderHeadlineRow(
   const row = el('div', { class: 'metric-headline' });
   row.appendChild(value);
 
-  const chip = renderIncreaseChip(metric);
+  const chip = renderDeltaChip(metric);
   // In the fitted modes the number is the whole point of the view, so the chip
   // goes under it instead of taking width from it. The slot that holds the chip
   // is always present, even with no rise to show: the value is centred as part
@@ -1052,9 +1111,11 @@ function fitHeadlineToLayout(value: HTMLElement, row: HTMLElement): void {
 /**
  * Paint the headline, rolling from the value it last showed.
  *
- * A refresh that lands mid-roll retargets the animation from the value it was
- * already heading to, so the digits keep moving forward instead of snapping
- * back to the previous snapshot's total.
+ * The roll is stored as a time window in `state.rolls` rather than as a live
+ * animation handle, because the view is rebuilt on every snapshot and the
+ * element the animation was running on is discarded. A rebuilt headline resumes
+ * the roll from where the old one had got to, so a refresh landing mid-roll no
+ * longer snaps the number to its target and skips the animation.
  */
 function paintHeadline(
   value: HTMLElement,
@@ -1064,61 +1125,97 @@ function paintHeadline(
 ): void {
   // The headline uses the display budget, matching the interval cells above it.
   const format = (v: number) => formatMetricValue(metric, v);
-  const previous = state.displayed[metric];
 
   if (pending || target === null) {
     value.textContent = DASH;
     state.displayed[metric] = null;
+    state.rolls[metric] = null;
     return;
   }
 
+  const roll = state.rolls[metric];
+  const now = Date.now();
+  const previous = state.displayed[metric];
   state.displayed[metric] = target;
-  if (previous === null || previous === target) {
-    value.textContent = format(target);
+
+  // A roll still in flight owns the element. Resuming it is what makes the
+  // animation look the same on every refresh: the digits carry on from where
+  // they had reached instead of restarting from the previous total.
+  if (roll && roll.to === target && now - roll.startedAt < roll.durationMs) {
+    const elapsed = now - roll.startedAt;
+    animateHeadline(value, roll.from, roll.to, format, roll.durationMs - elapsed, () => {
+      if (state.rolls[metric] === roll) state.rolls[metric] = null;
+    });
     return;
   }
-  animateHeadline(value, previous, target, format, HEADLINE_ANIM_MS);
+
+  if (previous === null || previous === target) {
+    value.textContent = format(target);
+    state.rolls[metric] = null;
+    return;
+  }
+
+  const next: Roll = { from: previous, to: target, startedAt: now, durationMs: HEADLINE_ANIM_MS };
+  state.rolls[metric] = next;
+  animateHeadline(value, previous, target, format, HEADLINE_ANIM_MS, () => {
+    // Only clear the marker if no newer roll has taken over in the meantime.
+    if (state.rolls[metric] === next) state.rolls[metric] = null;
+  });
 }
 
 /**
- * The `↑ $0.08` chip, or null when nothing has risen recently.
+ * The change chip beside the headline, or null when nothing has moved recently.
  *
- * A rise fades out after a few seconds rather than disappearing, so the eye can
- * finish reading it, and it is removed from state once faded so a later render
- * cannot bring a stale number back.
+ * A rise reads `↑ $0.08`; a fall reads `↓ $0.02 Recalculated`, because a
+ * headline that drops is a correction to a figure already shown rather than new
+ * usage arriving. Both fade out after a few seconds rather than disappearing, so
+ * the eye can finish reading them, and both are removed from state once faded so
+ * a later render cannot bring a stale number back.
  */
-function renderIncreaseChip(metric: Metric): HTMLElement | null {
-  const increase = state.increases[metric];
-  if (!increase) return null;
+function renderDeltaChip(metric: Metric): HTMLElement | null {
+  const entry = state.deltas[metric];
+  if (!entry) return null;
 
-  const age = Date.now() - increase.at;
+  const now = Date.now();
+  const age = now - entry.at;
   if (age >= INCREASE_TTL_MS) {
-    state.increases[metric] = null;
+    state.deltas[metric] = null;
     return null;
   }
 
-  const amount = formatMetricValue(metric, increase.amount);
-  // A rise with no new requests means the rolling window slid rather than new
-  // usage arriving, so there is no count worth stating.
-  const requests =
-    increase.requests === null || increase.requests === 0
+  const up = entry.direction === 'up';
+  const amount = formatMetricValue(metric, entry.amount);
+  const arrow = up ? '\u2191' : '\u2193';
+  // A change with no new requests means the rolling window slid rather than new
+  // usage arriving, so there is no count worth stating. A fall is a correction,
+  // so it says so instead of naming a request count.
+  const detail = up
+    ? entry.requests === null || entry.requests === 0
       ? null
-      : `${formatCount(increase.requests)} request${increase.requests === 1 ? '' : 's'}`;
+      : `${formatCount(entry.requests)} request${entry.requests === 1 ? '' : 's'}`
+    : 'Recalculated';
 
+  const label = up ? `Last increase ${amount}` : `Recalculated, down ${amount}`;
   const chip = el('div', {
-    class: 'metric-increase',
-    'aria-label': `Last increase ${amount}${requests ? `, ${requests}` : ''}`,
-    title: `Rose ${amount} since the previous refresh${requests ? `, ${requests} in this interval` : ''}`,
+    class: `metric-increase${up ? '' : ' is-down'}`,
+    'aria-label': `${label}${detail ? `, ${detail}` : ''}`,
+    title: up
+      ? `Rose ${amount} since the previous refresh${detail ? `, ${detail} in this interval` : ''}`
+      : `Fell ${amount} since the previous refresh, so the figure was recalculated`,
   });
-  chip.appendChild(el('span', { class: 'metric-increase-value', text: `\u2191 ${amount}` }));
-  if (requests) chip.appendChild(el('span', { class: 'metric-increase-sub', text: requests }));
+  chip.appendChild(el('span', { class: 'metric-increase-value', text: `${arrow} ${amount}` }));
+  if (detail) chip.appendChild(el('span', { class: 'metric-increase-sub', text: detail }));
 
-  // A new rise inverts the chip for a moment so a delta the eye has not seen
-  // before announces itself. It is a flash on the chip only: the digits roll,
-  // the annotation inverts, and the number never recolours mid-roll.
-  if (age < INCREASE_FLASH_MS && motionAllowed()) {
+  // A fresh change inverts the chip for a moment so a delta the eye has not seen
+  // before announces itself. The flash is anchored to the first render of this
+  // change rather than to the change itself: a change that arrives while another
+  // tab is showing would otherwise have used up its flash before the chip was
+  // ever on screen, which is why it only sometimes inverted.
+  if (entry.flashAt === null) entry.flashAt = now;
+  const flashAge = now - entry.flashAt;
+  if (flashAge < INCREASE_FLASH_MS && motionAllowed()) {
     chip.classList.add('is-new');
-    window.setTimeout(() => chip.classList.remove('is-new'), INCREASE_FLASH_MS - age);
+    window.setTimeout(() => chip.classList.remove('is-new'), INCREASE_FLASH_MS - flashAge);
   }
 
   // A render that lands mid-fade rebuilds the chip, so it resumes at the
@@ -1133,7 +1230,7 @@ function renderIncreaseChip(metric: Metric): HTMLElement | null {
   } else {
     window.setTimeout(fade, fadeAt - age);
   }
-  window.setTimeout(() => expireIncrease(metric, increase.at, chip), INCREASE_TTL_MS - age);
+  window.setTimeout(() => expireDelta(metric, entry.at, chip), INCREASE_TTL_MS - age);
 
   return chip;
 }
@@ -2484,6 +2581,7 @@ function openCharts(metric: Metric, scale: ChartScale): void {
   state.chartMetric = metric;
   state.chartScale = scale;
   state.chartAnchor = Date.now();
+  state.chartPinned = false;
   void loadChart().then(() => render());
   render();
 }
@@ -2531,6 +2629,9 @@ function renderCharts(): void {
   prev.appendChild(icon(ICONS.prev));
   prev.addEventListener('click', () => {
     state.chartAnchor = shiftPeriod(state.chartAnchor, state.chartScale, -1);
+    // Paging back is a deliberate move to a past period, so the chart stops
+    // following the clock until the user returns to the live edge.
+    state.chartPinned = true;
     void loadChart().then(() => render());
   });
   const label = el('span', {
@@ -2543,6 +2644,9 @@ function renderCharts(): void {
     const shifted = shiftPeriod(state.chartAnchor, state.chartScale, 1);
     if (shifted > Date.now()) return;
     state.chartAnchor = shifted;
+    // Reaching the live edge resumes following the clock, so the chart does not
+    // sit one period behind now.
+    state.chartPinned = shifted < Date.now() - CHART_RANGE_MS[state.chartScale];
     void loadChart().then(() => render());
   });
   nav.append(prev, label, next);
@@ -2591,6 +2695,7 @@ function renderChartOptions(): HTMLElement {
     button.addEventListener('click', () => {
       state.chartScale = window.key;
       state.chartAnchor = Date.now();
+      state.chartPinned = false;
       void loadChart().then(() => render());
     });
     scaleSeg.appendChild(button);

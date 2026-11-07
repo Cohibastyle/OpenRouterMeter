@@ -22,6 +22,8 @@ function request(eventTime: number, costMicro: number, tokens = 1000): RequestRe
     output_tokens: Math.round(tokens * 0.3),
     total_tokens: tokens,
     cost_micro: costMicro,
+    // One request per row, which is what a non-aggregate source reports.
+    request_count: 1,
     source: 'test',
   };
 }
@@ -218,4 +220,46 @@ test('sample rows are never summed with real rows', () => {
     realOnly.find((c) => c.key === '1h')!.spend_micro,
     'this is why sample rows must be purged on connect',
   );
+});
+
+test('a window sums the source request count, not the number of rows', () => {
+  // The bug: request_count was the row count. A row is an aggregate, so a
+  // minute bucket holding 40 requests counted as one, and because the collector
+  // stores the same period at minute, hour, and day granularity the figure also
+  // changed with whichever granularity the window selected. That is how the
+  // 1-hour count could read higher than the 24-hour one.
+  const aggregate = (eventTime: number, requests: number): RequestRecord => ({
+    ...request(eventTime, 1_000_000),
+    id: `agg:${eventTime}`,
+    request_count: requests,
+    source: 'openrouter.analytics.minute',
+  });
+
+  const rows = [
+    aggregate(NOW - 5 * MINUTE, 40),
+    aggregate(NOW - 15 * MINUTE, 25),
+    aggregate(NOW - 2 * HOUR, 300),
+  ];
+
+  const windows = computeWindows(baseInputs(rows));
+  const oneHour = windows.find((c) => c.key === '1h')!;
+  const day = windows.find((c) => c.key === '24h')!;
+
+  assert.equal(oneHour.request_count, 65, '40 + 25 requests inside the hour');
+  assert.equal(day.request_count, 365, 'every request inside the day');
+  assert.ok(
+    day.request_count! > oneHour.request_count!,
+    'the 24-hour count must always exceed the 1-hour count',
+  );
+});
+
+test('a window with no reported count stays null rather than counting rows', () => {
+  // Counting rows here would report 2 requests for a source that never said how
+  // many there were, which is a guess dressed as a measurement.
+  const rows = [
+    { ...request(NOW - 5 * MINUTE, 1_000_000), id: 'a', request_count: null },
+    { ...request(NOW - 10 * MINUTE, 1_000_000), id: 'b', request_count: null },
+  ];
+  const oneHour = computeWindows(baseInputs(rows)).find((c) => c.key === '1h')!;
+  assert.equal(oneHour.request_count, null);
 });

@@ -54,7 +54,26 @@ pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| "unknown".to_string());
     state.log("info", "window", &format!("window shown at {size}"));
 
+    // The periodic refresh the Electron build ran from its main process. Without
+    // it the widget only updates when the refresh button is pressed.
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    app.manage(RefreshStop(stop.clone()));
+    crate::refresh::start(app.handle().clone(), stop);
+
     Ok(())
+}
+
+/// Holds the flag the refresh thread watches, so shutdown can stop it.
+pub struct RefreshStop(pub std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+/// Ask the refresh thread to stop before the process exits.
+///
+/// The thread sleeps between ticks, so without this it would keep collecting
+/// while the app is tearing down and could write to a database that is closing.
+pub fn stop_refresh(app: &AppHandle) {
+    if let Some(stop) = app.try_state::<RefreshStop>() {
+        stop.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// Push `window:layout` on every resize, the way the Electron main process does.
@@ -121,7 +140,10 @@ fn build_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                     let _ = w.set_focus();
                 }
             }
-            "quit" => app.exit(0),
+            "quit" => {
+                stop_refresh(app);
+                app.exit(0);
+            }
             _ => {}
         })
         .build(app)?;

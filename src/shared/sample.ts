@@ -97,6 +97,8 @@ export function generateSampleRequests(options: SampleOptions = {}): RequestReco
         output_tokens: output,
         total_tokens: total,
         cost_micro: microFromNumber(failed ? cost * 0.1 : cost),
+        // Sample rows are one request each, unlike a collected aggregate.
+        request_count: 1,
         source: 'sample',
       });
     }

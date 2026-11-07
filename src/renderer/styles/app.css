@@ -712,6 +712,22 @@ body {
 }
 
 /*
+ * A fall is a correction to a figure already on screen, not new usage, so it
+ * takes the muted text colour rather than the tab accent. It still inverts on
+ * arrival, so the eye catches it, but it never reads as spend that just
+ * happened.
+ */
+.metric-increase.is-down {
+  color: var(--text-dim);
+}
+
+.metric-increase.is-down.is-new {
+  background: var(--text-dim);
+  color: var(--panel-solid, #161b22);
+  box-shadow: 0 0 0 4px var(--text-dim);
+}
+
+/*
  * A freshly recorded rise inverts for a moment: the chip fills with the tab
  * accent and its text takes the panel colour, so a delta the eye has not seen
  * before announces itself and then settles back into the annotation it becomes.

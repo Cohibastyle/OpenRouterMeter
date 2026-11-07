@@ -391,6 +391,9 @@ export class OpenRouterCollector {
       output_tokens: row.output_tokens,
       total_tokens: row.total_tokens,
       cost_micro: row.cost_micro,
+      // The source's own count for this bucket, so a window sums requests
+      // rather than rows.
+      request_count: row.requests,
       source: 'openrouter.activity',
     }));
   }
@@ -433,6 +436,9 @@ export class OpenRouterCollector {
         total_tokens: row.tokens_total,
         // total_usage is in dollars, not micro-dollars.
         cost_micro: row.total_usage_micro === null ? null : microFromNumber(row.total_usage_micro),
+        // The source's own count for this bucket, so a window sums requests
+        // rather than rows.
+        request_count: row.request_count,
         source: `openrouter.analytics.${granularity}`,
       };
     });

@@ -6,6 +6,7 @@ mod collector;
 mod credentials;
 mod db;
 mod logging;
+mod refresh;
 mod shell;
 mod snapshot;
 mod state;

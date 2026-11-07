@@ -46,7 +46,7 @@ drift between the two hosts.
 
 | Area | Lines | Replacement |
 |---|---|---|
-| `src/main/index.ts` | 1,728 | `src-tauri/src/{shell,bridge}.rs` |
+| `src/main/index.ts` | 1,728 | `src-tauri/src/{shell,bridge,refresh}.rs` |
 | `src/main/db/database.ts` | 656 | `src-tauri/src/db.rs` (rusqlite) |
 | `src/main/collectors/openrouter.ts` | 471 | `src-tauri/src/collector.rs` (reqwest); parsers kept in `src/shared/` |
 | `src/main/logging/logger.ts` | 184 | `src-tauri/src/logging.rs` |
@@ -63,9 +63,9 @@ must reproduce it exactly. That test caught a genuine bug: the local day and
 month boundaries assumed UTC, which shifted the today total by 800k
 micro-dollars in a non-UTC zone.
 
-28 Rust tests pass, including exact parity on all five windows, today, month,
-and the latest request, plus the logger's redaction and rotation and the update
-check's version comparison.
+34 Rust tests pass, including exact parity on all five windows, today, month,
+and the latest request, plus the logger's redaction and rotation, the update
+check's version comparison, and the refresh loop's cadence parsing.
 
 ## Rendering
 
@@ -88,6 +88,12 @@ Four rendering differences were found and fixed during the port:
   tab change, so the label spans were never created when the window started
   narrow and was then widened. It now also runs on `window:layout`. This is a
   latent bug in the Electron build too, which the saved window size hides.
+- **Nothing ever refreshed.** The Electron main process ran two timers, one
+  collecting every `refresh_sec` and one invalidating the chart every
+  `chart_refresh_sec`. The port dropped both, so the widget only updated when the
+  refresh button was pressed. `src-tauri/src/refresh.rs` restores them on one
+  thread, honouring `pause_when_hidden` and rebasing the timers while hidden so
+  showing the window again does not fire a burst of catch-up refreshes.
 
 The capture harness also needed a fix: `screencapture -R` records the screen, so
 a transparent window with `backdrop-filter` came out blurred against the

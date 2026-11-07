@@ -87,6 +87,12 @@ const MIGRATIONS: &[(i64, &str)] = &[
         );
         "#,
     ),
+    (
+        4,
+        r#"
+        ALTER TABLE request ADD COLUMN request_count INTEGER;
+        "#,
+    ),
 ];
 
 pub struct Db {
@@ -163,8 +169,9 @@ impl Db {
             let mut stmt = tx.prepare(
                 "INSERT INTO request (
                    id, event_time, received_time, key_id, key_name, model, status,
-                   input_tokens, output_tokens, total_tokens, cost_micro, source, updated_at
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   input_tokens, output_tokens, total_tokens, cost_micro, request_count,
+                   source, updated_at
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(id) DO UPDATE SET
                    event_time = excluded.event_time,
                    received_time = excluded.received_time,
@@ -176,6 +183,7 @@ impl Db {
                    output_tokens = excluded.output_tokens,
                    total_tokens = excluded.total_tokens,
                    cost_micro = excluded.cost_micro,
+                   request_count = excluded.request_count,
                    source = excluded.source,
                    updated_at = excluded.updated_at",
             )?;
@@ -192,6 +200,7 @@ impl Db {
                     row["output_tokens"].as_i64(),
                     row["total_tokens"].as_i64(),
                     row["cost_micro"].as_i64(),
+                    row["request_count"].as_i64(),
                     row["source"].as_str().unwrap_or("sample"),
                     row["received_time"].as_str(),
                 ])?;
@@ -206,12 +215,12 @@ impl Db {
         let sql = match key_id {
             Some(_) => {
                 "SELECT id, event_time, received_time, key_id, key_name, model, status,
-                        input_tokens, output_tokens, total_tokens, cost_micro, source
+                        input_tokens, output_tokens, total_tokens, cost_micro, request_count, source
                  FROM request WHERE key_id = ?1 ORDER BY event_time DESC LIMIT ?2"
             }
             None => {
                 "SELECT id, event_time, received_time, key_id, key_name, model, status,
-                        input_tokens, output_tokens, total_tokens, cost_micro, source
+                        input_tokens, output_tokens, total_tokens, cost_micro, request_count, source
                  FROM request ORDER BY event_time DESC LIMIT ?1"
             }
         };
@@ -229,7 +238,8 @@ impl Db {
                 "output_tokens": r.get::<_, Option<i64>>(8)?,
                 "total_tokens": r.get::<_, Option<i64>>(9)?,
                 "cost_micro": r.get::<_, Option<i64>>(10)?,
-                "source": r.get::<_, String>(11)?,
+                "request_count": r.get::<_, Option<i64>>(11)?,
+                "source": r.get::<_, String>(12)?,
             }))
         };
 

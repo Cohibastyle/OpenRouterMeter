@@ -461,6 +461,11 @@ pub fn analytics_to_requests(rows: &[Value], granularity: &str, key_names: &BTre
                 "total_tokens": row["tokens_total"].as_i64(),
                 // total_usage is in dollars, not micro-dollars.
                 "cost_micro": row["total_usage_micro"].as_f64().map(micro_from_number),
+                // The source's own count for this bucket. Without it the window
+                // has to count rows, which undercounts and varies with the
+                // granularity the window selects. `num` yields an f64, so this
+                // must go through as_f64: as_i64 returns None for a JSON float.
+                "request_count": row["request_count"].as_f64().map(|v| v as i64),
                 "source": format!("openrouter.analytics.{granularity}"),
             })
         })
@@ -491,6 +496,7 @@ pub fn activity_to_requests(rows: &[Value]) -> Vec<Value> {
                 "output_tokens": row["output_tokens"],
                 "total_tokens": row["total_tokens"],
                 "cost_micro": row["cost_micro"],
+                "request_count": row["requests"].as_f64().map(|v| v as i64),
                 "source": "openrouter.activity",
             })
         })
@@ -516,6 +522,31 @@ mod tests {
         assert_eq!(parse_source_date(Some("2026-11-06 12:00:00")), "2026-11-06T12:00:00.000Z");
         assert_eq!(parse_source_date(Some("2026-11-06")), "2026-11-06T00:00:00.000Z");
         assert_eq!(parse_source_date(Some("2026-11-06T12:00:00Z")), "2026-11-06T12:00:00.000Z");
+    }
+
+    #[test]
+    fn an_analytics_row_keeps_the_source_request_count() {
+        // The bug: `num` yields an f64, and `as_i64` on a JSON float returns
+        // None, so the count was silently dropped and every window fell back to
+        // counting rows. A row is an aggregate, so that undercounted and made
+        // the 1-hour figure able to exceed the 24-hour one.
+        let payload = json!({
+            "data": {
+                "data": [
+                    {
+                        "date__hour": "2026-11-06 12:00:00",
+                        "total_usage": 0.5,
+                        "tokens_total": 100,
+                        "request_count": 42,
+                    },
+                ],
+                "metadata": { "truncated": false }
+            }
+        });
+        let parsed = parse_analytics_response(&payload, "hour", &[]);
+        let rows = parsed["rows"].as_array().unwrap();
+        let requests = analytics_to_requests(rows, "hour", &BTreeMap::new());
+        assert_eq!(requests[0]["request_count"], 42);
     }
 
     #[test]

@@ -86,6 +86,10 @@ export function computeWindows(inputs: WindowInputs): WindowCell[] {
     const input = sumIntOrNull(inWindow.map((r) => r.input_tokens));
     const output = sumIntOrNull(inWindow.map((r) => r.output_tokens));
     const total = sumIntOrNull(inWindow.map((r) => r.total_tokens));
+    // The source's own count, not the number of rows: a row is an aggregate, so
+    // counting rows undercounts and makes the figure depend on which
+    // granularity the window selected.
+    const requests = sumIntOrNull(inWindow.map((r) => r.request_count));
 
     const reason = partialReasonFor(windowStart, inputs);
     const coverage: Coverage = reason ? 'partial' : 'full';
@@ -96,7 +100,7 @@ export function computeWindows(inputs: WindowInputs): WindowCell[] {
       input_tokens: input,
       output_tokens: output,
       total_tokens: total,
-      request_count: inWindow.length,
+      request_count: requests,
       coverage,
       partial_reason: reason,
     };
