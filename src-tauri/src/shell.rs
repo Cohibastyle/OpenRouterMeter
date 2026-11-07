@@ -219,8 +219,25 @@ pub fn run_capture(app: AppHandle) {
 
             // Prefer the window's own buffer: a transparent window with
             // backdrop-filter composites against the desktop, so a screen grab
-            // comes out blurred.
-            if crate::capture::capture_window(&window, &path) {
+            // comes out blurred. The first size class is captured before the
+            // webview has painted, so retry while the buffer is still flat.
+            let mut painted = false;
+            for attempt in 0..6 {
+                match crate::capture::capture_window(&window, &path) {
+                    crate::capture::Capture::Painted => {
+                        painted = true;
+                        break;
+                    }
+                    crate::capture::Capture::Blank => {
+                        std::thread::sleep(std::time::Duration::from_millis(400));
+                        if attempt == 5 {
+                            println!("warning {name} still blank after 6 attempts");
+                        }
+                    }
+                    crate::capture::Capture::Failed => break,
+                }
+            }
+            if painted {
                 println!("captured {name} {cw}x{ch}");
                 continue;
             }
@@ -349,10 +366,35 @@ fn layout_for(width: f64, height: f64) -> Value {
         "mode": mode,
         "stripColumns": 5,
         "stripOverflow": false,
-        "stripDetail": "full",
+        "stripDetail": strip_detail(width),
         "iconRail": width_class == "xs" || width_class == "s",
         "collapsedFilters": width_class == "xs" || width_class == "s",
         "stackedHeaders": width_class == "xs",
         "showChart": mode == "expanded" || (mode == "standard" && height >= 280.0),
     })
+}
+
+/// Mirrors `stripDetailFor` in src/shared/layout.ts.
+///
+/// The interval label is always drawn because it is the cell's identity and the
+/// range button. The value and then the request count are added as the cell
+/// grows, so a narrow window degrades to a row of range buttons instead of a row
+/// of truncated numbers.
+fn strip_detail(width: f64) -> &'static str {
+    const VIEW_PAD_X: f64 = 10.0;
+    const STRIP_GAP: f64 = 3.0;
+    const CELL_PAD_X: f64 = 12.0;
+    const COLUMNS: f64 = 5.0;
+    const MIN_VALUE: f64 = 58.0;
+    const MIN_FULL: f64 = 132.0;
+
+    let usable = width - VIEW_PAD_X * 2.0 - STRIP_GAP * (COLUMNS - 1.0);
+    let content = usable / COLUMNS - CELL_PAD_X;
+    if content >= MIN_FULL {
+        "full"
+    } else if content >= MIN_VALUE {
+        "value"
+    } else {
+        "label"
+    }
 }

@@ -213,6 +213,10 @@ async function boot(): Promise<void> {
   layoutUnsubscribe = api.window.onLayout((layout) => {
     state.layout = layout;
     applyLayout();
+    // The tab bar drops its labels in the icon-rail widths, and the label spans
+    // are only created when the rail is off, so the bar has to be rebuilt when
+    // the width class changes rather than only when the tab does.
+    renderTabs();
     render();
   });
 
@@ -262,6 +266,7 @@ async function refreshLayout(): Promise<void> {
   const stateInfo = await api.window.getState();
   state.layout = stateInfo.layout;
   applyLayout();
+  renderTabs();
   render();
 }
 

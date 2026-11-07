@@ -10,10 +10,11 @@ both builds; only the host process differs.
 |---|---|---|
 | Electron | DMG | 80.0 MB |
 | Electron | app (unpacked) | 194.8 MB |
-| Tauri | DMG | **2.3 MB** |
-| Tauri | binary | 4.8 MB |
+| Tauri | DMG | **2.9 MB** |
+| Tauri | app (unpacked) | 6.0 MB |
+| Tauri | binary | 6.0 MB |
 
-The Tauri DMG is **35× smaller**. Almost all of the Electron bundle is the
+The Tauri DMG is **27× smaller**. Almost all of the Electron bundle is the
 Chromium binary inside `Electron Framework.framework` (164 MB unpacked); Tauri
 uses the system WKWebView instead, so there is no browser to ship.
 
@@ -62,7 +63,7 @@ must reproduce it exactly. That test caught a genuine bug: the local day and
 month boundaries assumed UTC, which shifted the today total by 800k
 micro-dollars in a non-UTC zone.
 
-12 Rust tests pass, including exact parity on all five windows, today, month,
+16 Rust tests pass, including exact parity on all five windows, today, month,
 and the latest request.
 
 ## Rendering
@@ -71,7 +72,7 @@ Both builds render the same four size classes at identical pixel dimensions
 (2× retina). The Tauri captures are in `captures-tauri/`; the Electron ones come
 from `npm run capture`.
 
-Two rendering differences were found and fixed during the port:
+Four rendering differences were found and fixed during the port:
 
 - **Layout never reflowed.** The renderer reflows from a `window:layout` push
   event that the Electron main process sends on resize. Tauri did not send it,
@@ -79,6 +80,20 @@ Two rendering differences were found and fixed during the port:
 - **The chart was empty.** `charts:get` was still returning a stub. Porting
   `buildChart` fixed it, including the granularity gate that makes the `10m`
   cell read `–` rather than an interpolated guess.
+- **The strip never degraded.** `layout_for` hardcoded `stripDetail: "full"`, so
+  at 180px the five cells drew their values and request counts on top of each
+  other instead of dropping to labels. Porting `stripDetailFor` fixed it.
+- **The tab bar kept its icon rail.** `renderTabs` only ran at startup and on a
+  tab change, so the label spans were never created when the window started
+  narrow and was then widened. It now also runs on `window:layout`. This is a
+  latent bug in the Electron build too, which the saved window size hides.
+
+The capture harness also needed a fix: `screencapture -R` records the screen, so
+a transparent window with `backdrop-filter` came out blurred against the
+desktop. `src-tauri/src/capture.rs` asks the content view to draw itself into a
+bitmap instead, the same thing Electron's `capturePage` does, and retries while
+the buffer is still a flat colour because the first size class is captured
+before the webview has painted.
 
 ## Collector
 
