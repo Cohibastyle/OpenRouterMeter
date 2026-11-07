@@ -33,7 +33,7 @@ test('the parsed date is stable regardless of the host time zone', () => {
 });
 
 test('activity rows get a stable natural key, not a positional index', async () => {
-  const { OpenRouterCollector } = await import('../src/main/collectors/openrouter.ts');
+  const { OpenRouterCollector } = await import('../src/shared/openrouter.ts');
   const row = {
     date: '2026-11-02T00:00:00.000Z',
     model: 'deepseek/deepseek-v4.1-flash-1017',
@@ -61,7 +61,7 @@ test('activity rows get a stable natural key, not a positional index', async () 
 });
 
 test('two different activity rows produce different ids', async () => {
-  const { OpenRouterCollector } = await import('../src/main/collectors/openrouter.ts');
+  const { OpenRouterCollector } = await import('../src/shared/openrouter.ts');
   const base = {
     date: '2026-11-02T00:00:00.000Z',
     model: 'a/b',

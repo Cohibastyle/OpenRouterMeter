@@ -1,5 +1,5 @@
-import { microFromNumber } from '../../shared/money.js';
-import type { KeyRecord, RequestRecord } from '../../shared/types.js';
+import { microFromNumber } from './money.js';
+import type { KeyRecord, RequestRecord } from './types.js';
 
 /**
  * Deterministic sample data. Every value produced here is labeled sample data

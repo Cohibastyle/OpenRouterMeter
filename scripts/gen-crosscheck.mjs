@@ -17,8 +17,8 @@ const out = join(root, 'src-tauri', 'fixtures');
 const NOW = 1_760_000_000_000;
 
 const entry = `
-import { buildSnapshot } from '${join(root, 'src/main/snapshot.ts').replace(/\\/g, '/')}';
-import { generateSampleRequests } from '${join(root, 'src/main/collectors/sample.ts').replace(/\\/g, '/')}';
+import { buildSnapshot } from '${join(root, 'src/shared/snapshot.ts').replace(/\\/g, '/')}';
+import { generateSampleRequests } from '${join(root, 'src/shared/sample.ts').replace(/\\/g, '/')}';
 
 const NOW = ${NOW};
 const requests = generateSampleRequests({ now: NOW });

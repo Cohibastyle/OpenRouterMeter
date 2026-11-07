@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [arm64, x64]
+        arch: [aarch64, x86_64]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,6 +27,16 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.arch == 'aarch64' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin' }}
+
+      - name: Cache Rust artefacts
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: Install dependencies
         run: npm ci
 
@@ -36,24 +46,29 @@ jobs:
       - name: Unit tests
         run: npm test
 
-      - name: Bundle app
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build frontend
         run: npm run build
 
+      # The frontend is bundled into the binary, so the DMG contains only the
+      # app and the WebKit shell it borrows from the system: no browser runtime.
       - name: Build DMG
-        run: npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
+        run: cargo tauri build --bundles dmg --target ${{ matrix.arch }}-apple-darwin
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          CI: true
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
           name: dmg-${{ matrix.arch }}
-          path: dist/*.dmg
+          path: src-tauri/target/**/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
       - name: Attach DMG to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.dmg
+          files: src-tauri/target/**/release/bundle/dmg/*.dmg
           fail_on_unmatched_files: true

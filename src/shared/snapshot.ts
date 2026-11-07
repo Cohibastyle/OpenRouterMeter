@@ -1,7 +1,7 @@
-import { SCHEMA_VERSION } from '../shared/constants.js';
-import { sumMicro } from '../shared/money.js';
-import { computeWindows } from '../shared/windows.js';
-import { selectGranularity, type CollectionRange } from '../shared/granularity.js';
+import { SCHEMA_VERSION } from './constants.js';
+import { sumMicro } from './money.js';
+import { computeWindows } from './windows.js';
+import { selectGranularity, type CollectionRange } from './granularity.js';
 import type {
   AccountInfo,
   CollectionStatus,
@@ -10,7 +10,7 @@ import type {
   RequestRecord,
   Scope,
   Snapshot,
-} from '../shared/types.js';
+} from './types.js';
 
 export interface SnapshotInputs {
   now: number;

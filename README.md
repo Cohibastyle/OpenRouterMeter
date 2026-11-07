@@ -1,9 +1,10 @@
 # OpenRouter Meter
 
 A frameless, always-on-top desktop widget that shows OpenRouter spending and token
-usage. It is a self-contained Electron app: the OpenRouter credential lives in the
-OS credential store, collection happens in the main process, and history is kept in
-a local SQLite database.
+usage. It is a Tauri app: the OpenRouter credential lives in the OS credential
+store, collection happens in the Rust process, and history is kept in a local
+SQLite database. The UI is bundled into the binary and runs in the system
+WebKit view, so there is no browser runtime to ship — the DMG is under 3 MB.
 
 This is the macOS build. The same source targets Windows and Linux; see
 [Platform notes](#platform-notes).
@@ -57,12 +58,6 @@ npm start
 top-right of the primary display at 320 x 240, above normal windows, with a menu
 bar item and no Dock icon.
 
-If the Electron binary did not download during `npm install`, fetch it once:
-
-```bash
-npm run setup:electron
-```
-
 ## Connect an OpenRouter account
 
 1. Open the widget and select the **Settings** tab.
@@ -72,8 +67,7 @@ npm run setup:electron
 4. Paste the key and choose **Connect**. The widget verifies it with a single
    read-only call before saving.
 
-The key is encrypted with Electron `safeStorage`, which maps to the macOS
-Keychain. It is never written to the database, a settings file, a log, or the
+The key is encrypted through the macOS Keychain via `security-framework`. It is never written to the database, a settings file, a log, or the
 renderer. If OS encryption is unavailable, the widget refuses to persist the key
 and keeps it in memory for the session only.
 
@@ -163,53 +157,37 @@ Show or hide, always-on-top toggle, ghost mode, refresh now, open settings, quit
 ## Development
 
 ```bash
-npm run build      # bundle main, preload, and renderer into dist/
+npm run build      # bundle the UI into dist/renderer
 npm run typecheck  # tsc --noEmit
-npm test           # 113 unit tests for accounting, time, axis, layout, redaction
-npm run selftest   # launch the app and run 15 runtime checks
+npm test           # 128 unit tests for accounting, time, axis, layout, redaction
+npm run dev        # build the UI and launch the app
 npm run capture    # render each size class to PNG for review
-npm run dist:mac   # build a distributable DMG into dist/
+npm run dist:mac   # build a distributable DMG
 ```
 
-`npm run capture` writes images to
-`~/Library/Application Support/OpenRouter Meter/captures/`. It needs the
-single-instance lock, so quit a running widget first, or pass a separate data
-folder:
-
-```bash
-./node_modules/.bin/electron . --capture --user-data-dir=/tmp/ormeter-capture
-```
+Rust needs to be on `PATH` for the app targets; the frontend build alone only
+needs Node.
 
 ### Bundle size
 
-The DMG is about 80 MB. Almost all of it is the Chromium binary inside
-`Electron Framework.framework` (164 MB unpacked), so the remaining savings come
-from what is left out rather than from the app code, which is under 1 MB.
+The DMG is **2.9 MB**. Nothing is pruned to get there: the UI bundle is under
+300 KB and the Rust binary 6.1 MB unpacked, and there is no browser runtime
+because the app renders in the system WebKit view. That is the whole reason the
+Tauri port exists — the same app was 80 MB with Electron, 27× larger, almost
+entirely Chromium.
 
-`scripts/afterPack.mjs` runs after packaging and removes two things the widget
-does not use:
-
-- **Chromium translations.** `mac.electronLanguages` only prunes the app's own
-  `Contents/Resources/*.lproj`; the 212 locale folders inside
-  `Electron Framework.framework` are 44 MB and are removed by the hook. English
-  and `en_GB` are kept, and every date and number in the UI is formatted with an
-  explicit `en-US` locale.
-- **SwiftShader.** `libvk_swiftshader.dylib` is a 16 MB CPU rasterizer used only
-  when no GPU is available. The widget draws 2D content through the normal GPU
-  path and renders correctly with `--disable-gpu`, so the fallback is dropped.
-
-The DMG uses `UDBZ` (bzip2) rather than the default `UDZO`; it compresses this
-bundle about 19 MB smaller.
+`Cargo.toml` sets the release profile to `lto = true`, `opt-level = "s"`,
+`panic = "abort"` and `strip = true`, which accounts for most of the difference
+between a debug and a release build.
 
 ### Project layout
 
 ```
-src/main/            window, tray, shortcuts, collectors, database, IPC
-src/main/logging/    structured logger, redaction, rotation, ring buffer
-src/main/diagnostics/ environment, storage, performance, bundle redaction
-src/preload/         the context bridge surface and its types
+src-tauri/src/       window, tray, shortcuts, bridge, state, database
+src-tauri/src/       collector (reqwest), accounting, chart, snapshot
+src-tauri/frontend/  the Tauri bridge that installs window.widget
 src/renderer/        views, components, responsive styles
-src/renderer/charts/ log time scale, tick generator, bar renderer, hit testing
+src/renderer/charts/ time scale, tick generator, bar renderer, hit testing
 src/shared/          types, schemas, money, formatting, time axis, layout
 tests/               unit tests
 docs/                platform, API, security, data model, operations notes
@@ -218,11 +196,12 @@ sample-data/         safe fixtures with no real secrets
 
 ### Security model
 
-- `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`.
-- The renderer loads only local files, with a strict CSP and no remote origins.
-- The preload exposes a fixed set of named methods. There is no generic
-  `invoke(channel, payload)` passthrough.
-- Every IPC handler validates and bounds its arguments.
+- The UI runs in the system WebKit view with no Node access at all.
+- `tauri.conf.json` sets a strict CSP: `default-src 'none'`, scripts and styles
+  only from the bundle, `connect-src 'none'`, and no remote origins.
+- `tauriBridge.ts` exposes a fixed set of named `WidgetApi` methods. There is no
+  generic invoke passthrough to the Rust side.
+- Every command validates and bounds its arguments.
 - Logs are redacted at write time, not at display time.
 - No telemetry, no analytics, no crash upload. The only outbound traffic is to
   OpenRouter.

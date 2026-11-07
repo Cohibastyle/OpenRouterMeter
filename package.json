@@ -1,60 +1,23 @@
 {
-  "name": "openrouter-desktop-widget",
+  "name": "openrouter-meter",
   "productName": "OpenRouter Meter",
   "version": "0.2.0",
   "description": "Always-on-top desktop widget for OpenRouter spending and token usage",
   "author": "Cohibastyle",
   "private": true,
-  "main": "dist/main/index.js",
   "scripts": {
-    "build": "node scripts/build.mjs",
-    "dev": "node scripts/build.mjs && electron .",
-    "start": "node scripts/build.mjs && electron .",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/test.mjs",
-    "selftest": "node scripts/build.mjs && electron . --selftest",
-    "dist:mac": "node scripts/build.mjs && electron-builder --mac",
-    "capture": "node scripts/build.mjs && electron . --capture",
-    "setup:electron": "node scripts/setup-electron.mjs",
-    "build:tauri": "node scripts/build-tauri.mjs",
-    "tauri:dev": "node scripts/build-tauri.mjs && cargo-tauri dev",
-    "tauri:build": "node scripts/build-tauri.mjs && cargo-tauri build",
-    "tauri:capture": "node scripts/build-tauri.mjs && cargo-tauri build --bundles app && \"src-tauri/target/release/bundle/macos/OpenRouter Meter.app/Contents/MacOS/OpenRouter Meter\" --capture"
+    "build": "node scripts/build-tauri.mjs",
+    "dev": "node scripts/build-tauri.mjs && cargo-tauri dev",
+    "start": "node scripts/build-tauri.mjs && cargo-tauri dev",
+    "dist:mac": "node scripts/build-tauri.mjs && cargo-tauri build --bundles dmg",
+    "capture": "node scripts/build-tauri.mjs && cargo-tauri build --bundles app && \"src-tauri/target/release/bundle/macos/OpenRouter Meter.app/Contents/MacOS/OpenRouter Meter\" --capture"
   },
   "devDependencies": {
     "@tauri-apps/api": "^2.12.4",
-    "electron": "^38.0.0",
-    "electron-builder": "^25.1.8",
+    "@types/node": "^26.6.6",
     "esbuild": "^0.25.0",
     "typescript": "^5.7.0"
-  },
-  "build": {
-    "appId": "ai.openrouter.widget",
-    "productName": "OpenRouter Meter",
-    "afterPack": "scripts/afterPack.mjs",
-    "files": [
-      "dist/**/*",
-      "!dist/mac*/**",
-      "!dist/*.dmg",
-      "!dist/*.blockmap",
-      "!dist/builder-*.yml",
-      "package.json"
-    ],
-    "mac": {
-      "category": "public.app-category.developer-tools",
-      "target": [
-        "dmg"
-      ],
-      "electronLanguages": [
-        "en",
-        "en_GB"
-      ],
-      "extendInfo": {
-        "LSUIElement": 1
-      }
-    },
-    "dmg": {
-      "format": "UDBZ"
-    }
   }
 }

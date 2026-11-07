@@ -15,8 +15,8 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const out = join(root, 'src-tauri', 'fixtures');
 
 const entry = `
-import { buildSnapshot } from '${join(root, 'src/main/snapshot.ts').replace(/\\/g, '/')}';
-import { generateSampleRequests, sampleKeys } from '${join(root, 'src/main/collectors/sample.ts').replace(/\\/g, '/')}';
+import { buildSnapshot } from '${join(root, 'src/shared/snapshot.ts').replace(/\\/g, '/')}';
+import { generateSampleRequests, sampleKeys } from '${join(root, 'src/shared/sample.ts').replace(/\\/g, '/')}';
 import { DEFAULT_SETTINGS } from '${join(root, 'src/shared/settings.ts').replace(/\\/g, '/')}';
 const SAMPLE_GRANULARITY_MS = 60 * 1000;
 

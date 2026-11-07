@@ -5,8 +5,8 @@ import {
   OPENROUTER_CREDITS_URL,
   OPENROUTER_KEY_URL,
   OPENROUTER_KEYS_URL_API,
-} from '../../shared/constants.js';
-import { parseSourceDate } from '../../shared/sourceDate.js';
+} from './constants.js';
+import { parseSourceDate } from './sourceDate.js';
 export { parseSourceDate };
 import {
   buildAnalyticsBody,
@@ -15,10 +15,10 @@ import {
   type AnalyticsQuery,
   type AnalyticsResult,
   type AnalyticsRow,
-} from '../../shared/analytics.js';
-import { microFromNumber } from '../../shared/money.js';
-import { looksLikeCredential } from '../../shared/redact.js';
-import type { KeyRecord, RequestRecord } from '../../shared/types.js';
+} from './analytics.js';
+import { microFromNumber } from './money.js';
+import { looksLikeCredential } from './redact.js';
+import type { KeyRecord, RequestRecord } from './types.js';
 
 export type CollectorErrorCode =
   | 'invalid_credential'
