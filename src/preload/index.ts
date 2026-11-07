@@ -16,12 +16,13 @@ import type { Settings } from '../shared/settings.js';
 import type { LayoutInfo } from '../shared/layout.js';
 import type { BreakdownResult } from '../shared/breakdown.js';
 import type { ChartScale } from '../shared/chart.js';
+import type { WidgetApi } from '../shared/widgetApi.js';
 
 /**
  * A fixed, named IPC surface. There is deliberately no generic
  * invoke(channel, payload) passthrough, per FSD section 5.3.
  */
-const api = {
+const api: WidgetApi = {
   account: {
     status: (): Promise<Snapshot['account']> => ipcRenderer.invoke('account:status'),
   },
@@ -153,4 +154,4 @@ const api = {
 
 contextBridge.exposeInMainWorld('widget', api);
 
-export type WidgetApi = typeof api;
+export type { WidgetApi } from '../shared/widgetApi.js';

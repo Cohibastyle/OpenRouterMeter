@@ -1,4 +1,4 @@
-import type { WidgetApi } from '../preload/index.js';
+import type { WidgetApi } from '../shared/widgetApi.js';
 import type { LayoutInfo } from '../shared/layout.js';
 import type { Settings } from '../shared/settings.js';
 import type { BreakdownResult, BreakdownRow } from '../shared/breakdown.js';
@@ -255,6 +255,7 @@ function applyLayout(): void {
   root.dataset.heightClass = layout.heightClass;
   root.dataset.iconRail = String(layout.iconRail);
   root.dataset.stackedHeaders = String(layout.stackedHeaders);
+  root.dataset.showChart = String(layout.showChart);
 }
 
 async function refreshLayout(): Promise<void> {
