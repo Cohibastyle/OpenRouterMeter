@@ -145,7 +145,10 @@ What made the removal safe, in the order it was done:
    accounting must reproduce exactly, which keeps the port checked against
    something other than itself.
 4. **The release workflow was replaced**, not deleted: it now builds with
-   `cargo tauri build` for both `aarch64-apple-darwin` and `x86_64-apple-darwin`.
+   `npx tauri build` for both `aarch64-apple-darwin` and `x86_64-apple-darwin`.
+   The CLI is a pinned devDependency rather than a global `cargo-tauri` install,
+   because a fresh runner has no global CLI and `cargo install tauri-cli` would
+   compile it from source on every run.
 
 `src/renderer/` and `src/shared/` were never Electron code. They are the UI and
 the shared logic, roughly 8,100 lines that both hosts compiled, and they are

@@ -54,8 +54,13 @@ jobs:
 
       # The frontend is bundled into the binary, so the DMG contains only the
       # app and the WebKit shell it borrows from the system: no browser runtime.
+      #
+      # `npx tauri` rather than `cargo tauri`: the CLI is a pinned devDependency,
+      # so `npm ci` provides it. A bare `cargo tauri` needs a global install that
+      # a fresh runner does not have, and `cargo install tauri-cli` would compile
+      # the CLI from source on every run.
       - name: Build DMG
-        run: cargo tauri build --bundles dmg --target ${{ matrix.arch }}-apple-darwin
+        run: npx tauri build --bundles dmg --target ${{ matrix.arch }}-apple-darwin
         env:
           CI: true
 

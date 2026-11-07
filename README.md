@@ -159,14 +159,21 @@ Show or hide, always-on-top toggle, ghost mode, refresh now, open settings, quit
 ```bash
 npm run build      # bundle the UI into dist/renderer
 npm run typecheck  # tsc --noEmit
-npm test           # 128 unit tests for accounting, time, axis, layout, redaction
+npm test           # 137 unit tests for accounting, time, axis, layout, redaction
 npm run dev        # build the UI and launch the app
 npm run capture    # render each size class to PNG for review
 npm run dist:mac   # build a distributable DMG
 ```
 
 Rust needs to be on `PATH` for the app targets; the frontend build alone only
-needs Node.
+needs Node. The Tauri CLI is a devDependency, so `npm install` provides it — no
+global `cargo install tauri-cli` is needed.
+
+The Rust side has its own suite:
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml
+```
 
 ### Bundle size
 

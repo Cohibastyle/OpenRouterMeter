@@ -2,21 +2,24 @@
 
 ## Credential handling
 
-- The OpenRouter key is encrypted with Electron `safeStorage`, which maps to the
-  macOS Keychain, Windows DPAPI, and libsecret or KWallet on Linux.
-- The ciphertext lives at
-  `~/Library/Application Support/OpenRouter Widget/credentials/openrouter.bin`
-  with mode `0600`.
-- The plaintext is held in main-process memory only for the duration of a request.
+- The OpenRouter key is stored as a generic-password item in the macOS login
+  Keychain, via `security-framework`. This is the direct equivalent of Electron's
+  `safeStorage`, so a key saved by the Electron build is readable here and vice
+  versa. The service is `openrouter-desktop-widget` and the account is
+  `openrouter`.
+- There is no ciphertext file. The Keychain owns the encryption and the access
+  control, so nothing credential-shaped is written to the app's data directory.
+- The plaintext is held in the Rust host's memory only for the duration of a
+  request.
 - The credential is never written to the SQLite database, a settings file, a log,
   a crash report, or the renderer.
 - After saving, the credential is never returned to the renderer, not even masked.
   The UI shows a fixed placeholder and the last four characters of the identifier.
 - The credential input is `type="password"` with `autocomplete="off"` and
   `spellcheck="false"`, and its value is cleared as soon as the save completes.
-- If `safeStorage.isEncryptionAvailable()` returns false, the widget refuses to
-  persist the key, keeps it in memory for the session only, and reports
-  `encryption_unavailable` in the UI.
+- If the Keychain is unreachable (`errSecInteractionNotAllowed`), the widget
+  refuses to persist the key, keeps it in memory for the session only, and
+  reports `encryption_unavailable` in the UI.
 
 ## Application hardening
 
