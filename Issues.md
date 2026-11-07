@@ -4,7 +4,11 @@ Keep a list of issues here and their status.
 
 ## Open Issues
 
-None outstanding. This batch is closed; see below.
+1. The requests count summary is not correct, the 24 hour count should always be more than the 1 hr count.
+2. The graph does not live pan across the x axis, it should
+3. The new tokens / Spending chip that momentarily appears doe not always behave the same,  sometimes it correctly inverts, sometimes it doesnt flash inverted, and someimtes the main big number doesnt roll.  
+4. When the on the Spending or Tokens tab, and the large number decrements, a chip should momentary appear showing a down arrow and the amount change "Recalculated"
+
 
 ## Closed Issues
 
