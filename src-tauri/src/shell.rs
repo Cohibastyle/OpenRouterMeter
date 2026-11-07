@@ -196,7 +196,13 @@ pub fn run_capture(app: AppHandle) {
         for (name, w, h) in CAPTURE_SIZES {
             let Some(window) = app.get_webview_window("main") else { return };
             let _ = window.set_size(tauri::LogicalSize::new(*w, *h));
-            std::thread::sleep(std::time::Duration::from_millis(900));
+            // Raise the window before capturing: `screencapture -R` records
+            // whatever is on screen in that rectangle, so an occluding window
+            // would be captured instead of the widget.
+            let _ = window.show();
+            let _ = window.set_focus();
+            let _ = window.set_always_on_top(true);
+            std::thread::sleep(std::time::Duration::from_millis(1200));
 
             let scale = window.scale_factor().unwrap_or(1.0);
             let pos = window.outer_position().unwrap_or_default();
@@ -210,13 +216,22 @@ pub fn run_capture(app: AppHandle) {
             let ch = size.height as f64 / scale;
 
             let path = out_dir.join(format!("{name}.png"));
+
+            // Prefer the window's own buffer: a transparent window with
+            // backdrop-filter composites against the desktop, so a screen grab
+            // comes out blurred.
+            if crate::capture::capture_window(&window, &path) {
+                println!("captured {name} {cw}x{ch}");
+                continue;
+            }
+
             let rect = format!("{x},{y},{cw},{ch}");
             let status = std::process::Command::new("screencapture")
                 .args(["-x", "-o", "-R", &rect, &path.to_string_lossy()])
                 .status();
 
             match status {
-                Ok(s) if s.success() => println!("captured {name} {cw}x{ch}"),
+                Ok(s) if s.success() => println!("captured {name} {cw}x{ch} (screen)"),
                 _ => println!("failed {name}"),
             }
         }

@@ -1,5 +1,6 @@
 mod accounting;
 mod bridge;
+mod capture;
 mod chart;
 mod collector;
 mod credentials;

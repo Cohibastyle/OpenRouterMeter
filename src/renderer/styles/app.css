@@ -889,6 +889,17 @@ body {
 
 /* ---------- chart ---------- */
 
+/*
+ * Standard at a short height hides the chart instead of truncating it. With no
+ * plot to fill the space the headline would sit at the top over a large empty
+ * area, so centre it: the layout then reads as deliberate rather than as a chart
+ * that failed to load. Micro and Compact are fitted to their box and keep their
+ * own alignment.
+ */
+.root[data-mode='standard'][data-show-chart='false'] .view > .metrics {
+  margin-block: auto;
+}
+
 .chart-wrap {
   position: relative;
   flex: 1 1 auto;
