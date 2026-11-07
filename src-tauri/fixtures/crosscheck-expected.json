@@ -1,0 +1,148 @@
+{
+  "schema_version": 3,
+  "snapshot_version": 1,
+  "server_time": "2025-10-09T08:53:20.000Z",
+  "fetched_at": "2025-10-09T08:53:20.000Z",
+  "currency": "USD",
+  "time_zone": "UTC",
+  "scope": {
+    "kind": "all"
+  },
+  "today": {
+    "start": "2025-10-08T15:00:00.000Z",
+    "end": "2025-10-09T15:00:00.000Z",
+    "spend_micro": 2224824,
+    "input_tokens": 361825,
+    "output_tokens": 80421,
+    "total_tokens": 442246,
+    "request_count": 72
+  },
+  "month": {
+    "start": "2025-09-30T15:00:00.000Z",
+    "end": "2025-10-31T15:00:00.000Z",
+    "spend_micro": 16563445,
+    "input_tokens": 2440447,
+    "output_tokens": 638673,
+    "total_tokens": 3079120,
+    "request_count": 479
+  },
+  "today_source": null,
+  "month_source": null,
+  "counter_today": null,
+  "counter_month": null,
+  "latest_request": {
+    "id": "sample:1759999702098:2",
+    "event_time": "2025-10-09T08:48:22.098Z",
+    "received_time": "2025-10-09T08:48:23.598Z",
+    "key_id": "key_ci",
+    "key_name": "ci-runner",
+    "model": "google/gemini-3-pro",
+    "status": "success",
+    "input_tokens": 825,
+    "output_tokens": 893,
+    "total_tokens": 1718,
+    "cost_micro": 15870,
+    "source": "sample"
+  },
+  "coverage": {
+    "earliest_reliable": null,
+    "latest_source_date": null,
+    "spend": "full",
+    "tokens": "full",
+    "requests": "full",
+    "request_source": "full_account",
+    "warnings": []
+  },
+  "collection_status": {
+    "last_success": "2025-10-09T08:53:20.000Z",
+    "last_error_code": null,
+    "last_error_message": null,
+    "last_error_at": null,
+    "retry_at": null,
+    "backoff_ms": 0,
+    "stale": false,
+    "expected_delay_sec": 60
+  },
+  "windows": [
+    {
+      "key": "10m",
+      "label": "10m",
+      "window_start": "2025-10-09T08:43:20.000Z",
+      "window_end": "2025-10-09T08:53:20.000Z",
+      "spend_micro": 15870,
+      "input_tokens": 825,
+      "output_tokens": 893,
+      "total_tokens": 1718,
+      "request_count": 1,
+      "coverage": "full",
+      "partial_reason": null,
+      "as_of": "2025-10-09T08:53:20.000Z"
+    },
+    {
+      "key": "1h",
+      "label": "1h",
+      "window_start": "2025-10-09T07:53:20.000Z",
+      "window_end": "2025-10-09T08:53:20.000Z",
+      "spend_micro": 152715,
+      "input_tokens": 17070,
+      "output_tokens": 6767,
+      "total_tokens": 23837,
+      "request_count": 5,
+      "coverage": "full",
+      "partial_reason": null,
+      "as_of": "2025-10-09T08:53:20.000Z"
+    },
+    {
+      "key": "3h",
+      "label": "3h",
+      "window_start": "2025-10-09T05:53:20.000Z",
+      "window_end": "2025-10-09T08:53:20.000Z",
+      "spend_micro": 446446,
+      "input_tokens": 69578,
+      "output_tokens": 18118,
+      "total_tokens": 87696,
+      "request_count": 16,
+      "coverage": "full",
+      "partial_reason": null,
+      "as_of": "2025-10-09T08:53:20.000Z"
+    },
+    {
+      "key": "6h",
+      "label": "6h",
+      "window_start": "2025-10-09T02:53:20.000Z",
+      "window_end": "2025-10-09T08:53:20.000Z",
+      "spend_micro": 875662,
+      "input_tokens": 134705,
+      "output_tokens": 33707,
+      "total_tokens": 168412,
+      "request_count": 30,
+      "coverage": "full",
+      "partial_reason": null,
+      "as_of": "2025-10-09T08:53:20.000Z"
+    },
+    {
+      "key": "24h",
+      "label": "24h",
+      "window_start": "2025-10-08T08:53:20.000Z",
+      "window_end": "2025-10-09T08:53:20.000Z",
+      "spend_micro": 2699370,
+      "input_tokens": 421487,
+      "output_tokens": 100125,
+      "total_tokens": 521612,
+      "request_count": 84,
+      "coverage": "full",
+      "partial_reason": null,
+      "as_of": "2025-10-09T08:53:20.000Z"
+    }
+  ],
+  "sample": true,
+  "account": {
+    "connected": false,
+    "state": "not_connected",
+    "label": null,
+    "last4": null,
+    "saved_at": null,
+    "total_credits_micro": null,
+    "total_usage_micro": null
+  }
+}

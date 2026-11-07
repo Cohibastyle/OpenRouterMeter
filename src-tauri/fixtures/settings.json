@@ -1,0 +1,37 @@
+{
+  "parameters": {
+    "refresh_sec": 10,
+    "chart_refresh_sec": 60,
+    "pause_when_hidden": true,
+    "raw_retention_days": 90,
+    "agg_retention_months": 24,
+    "time_zone": "system",
+    "week_start": "monday",
+    "hour_format": "24",
+    "stale_threshold_sec": 60
+  },
+  "display": {
+    "theme": "dark",
+    "density": "comfortable",
+    "opacity": 100,
+    "always_on_top": "normal",
+    "ghost": false,
+    "locked": false,
+    "keep_in_work_area": true,
+    "snap_to_edges": true,
+    "launch_at_login": false,
+    "default_tab": "spending",
+    "metric_spending": "spend",
+    "metric_requests": "tokens",
+    "metric_models": "tokens",
+    "metric_api": "spend",
+    "animations": "on",
+    "chart_axis": "log"
+  },
+  "view": {
+    "tab": "spending",
+    "scope": {
+      "kind": "all"
+    }
+  }
+}

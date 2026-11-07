@@ -15,7 +15,11 @@
     "selftest": "node scripts/build.mjs && electron . --selftest",
     "dist:mac": "node scripts/build.mjs && electron-builder --mac",
     "capture": "node scripts/build.mjs && electron . --capture",
-    "setup:electron": "node scripts/setup-electron.mjs"
+    "setup:electron": "node scripts/setup-electron.mjs",
+    "build:tauri": "node scripts/build-tauri.mjs",
+    "tauri:dev": "node scripts/build-tauri.mjs && cargo-tauri dev",
+    "tauri:build": "node scripts/build-tauri.mjs && cargo-tauri build",
+    "tauri:capture": "node scripts/build-tauri.mjs && cargo-tauri build --bundles app && \"src-tauri/target/release/bundle/macos/OpenRouter Meter.app/Contents/MacOS/OpenRouter Meter\" --capture"
   },
   "devDependencies": {
     "electron": "^38.0.0",

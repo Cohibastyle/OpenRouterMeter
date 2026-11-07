@@ -1,0 +1,26 @@
+[
+  {
+    "id": "key_prod",
+    "name": "prod-key",
+    "removed": false,
+    "last4": "a91f"
+  },
+  {
+    "id": "key_dev",
+    "name": "dev-key",
+    "removed": false,
+    "last4": "7c02"
+  },
+  {
+    "id": "key_ci",
+    "name": "ci-runner",
+    "removed": false,
+    "last4": "3d55"
+  },
+  {
+    "id": "key_old",
+    "name": "legacy-key",
+    "removed": true,
+    "last4": "e410"
+  }
+]
