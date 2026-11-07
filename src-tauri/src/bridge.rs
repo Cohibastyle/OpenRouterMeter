@@ -1,0 +1,245 @@
+//! Phase 1 bridge: every method the renderer calls, answered from fixtures.
+//!
+//! The signatures mirror `src/shared/widgetApi.ts` exactly. Phase 2 replaces the
+//! storage-backed methods, Phase 3 the collection-backed ones, and Phase 4 the
+//! credential ones; the shape of this file does not change.
+
+use serde_json::{json, Value};
+use tauri::{AppHandle, Manager, State};
+
+use crate::state::AppState;
+
+fn fixture(state: &AppState, name: &str) -> Value {
+    state.fixture(name)
+}
+
+#[tauri::command]
+pub fn account_status(state: State<'_, AppState>) -> Value {
+    fixture(&state, "snapshot")["account"].clone()
+}
+
+#[tauri::command]
+pub fn snapshot_get(state: State<'_, AppState>) -> Value {
+    fixture(&state, "snapshot")
+}
+
+#[tauri::command]
+pub fn summary_get(state: State<'_, AppState>, metric: String) -> Value {
+    let snapshot = fixture(&state, "snapshot");
+    json!({
+        "windows": snapshot["windows"],
+        "metric": metric,
+        "as_of": snapshot["server_time"],
+    })
+}
+
+#[tauri::command]
+pub fn charts_get(state: State<'_, AppState>, params: Value) -> Value {
+    let _ = params;
+    fixture(&state, "chart")
+}
+
+#[tauri::command]
+pub fn requests_list(state: State<'_, AppState>, limit: usize, key_id: Option<String>) -> Value {
+    let all = fixture(&state, "requests");
+    let rows = all.as_array().cloned().unwrap_or_default();
+    let filtered: Vec<Value> = match key_id {
+        Some(id) => rows
+            .into_iter()
+            .filter(|r| r["key_id"].as_str() == Some(id.as_str()))
+            .collect(),
+        None => rows,
+    };
+    Value::Array(filtered.into_iter().take(limit).collect())
+}
+
+#[tauri::command]
+pub fn requests_breakdown(state: State<'_, AppState>, params: Value) -> Value {
+    let _ = params;
+    fixture(&state, "breakdown")
+}
+
+#[tauri::command]
+pub fn keys_list(state: State<'_, AppState>) -> Value {
+    fixture(&state, "keys")
+}
+
+#[tauri::command]
+pub fn window_get_state(app: AppHandle, state: State<'_, AppState>) -> Value {
+    crate::shell::window_state(&app, &state)
+}
+
+#[tauri::command]
+pub fn window_set_state(app: AppHandle, state: State<'_, AppState>, patch: Value) -> Value {
+    crate::shell::apply_window_patch(&app, &state, patch);
+    crate::shell::window_state(&app, &state)
+}
+
+#[tauri::command]
+pub fn window_minimize(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.minimize();
+    }
+}
+
+#[tauri::command]
+pub fn window_hide(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+}
+
+#[tauri::command]
+pub fn window_close(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+}
+
+#[tauri::command]
+pub fn window_reset_size(app: AppHandle) -> Value {
+    crate::shell::reset_size(&app)
+}
+
+#[tauri::command]
+pub fn settings_get(state: State<'_, AppState>) -> Value {
+    state.settings()
+}
+
+#[tauri::command]
+pub fn settings_set(state: State<'_, AppState>, patch: Value) -> Value {
+    state.apply_settings_patch(patch)
+}
+
+#[tauri::command]
+pub fn settings_reset(state: State<'_, AppState>, group: String) -> Value {
+    state.reset_settings(&group)
+}
+
+#[tauri::command]
+pub fn logs_query(state: State<'_, AppState>, query: Value) -> Value {
+    let _ = query;
+    state.logs()
+}
+
+#[tauri::command]
+pub fn logs_tail(state: State<'_, AppState>) -> Value {
+    state.set_tailing(true);
+    json!({ "subscribed": true, "latest_seq": state.latest_seq() })
+}
+
+#[tauri::command]
+pub fn logs_unsubscribe(state: State<'_, AppState>) -> Value {
+    state.set_tailing(false);
+    json!({ "subscribed": false })
+}
+
+#[tauri::command]
+pub fn logs_clear_view(state: State<'_, AppState>) -> Value {
+    state.clear_log_view();
+    json!({ "cleared": true })
+}
+
+#[tauri::command]
+pub fn logs_open_folder(state: State<'_, AppState>) -> Value {
+    json!({ "opened": state.log_dir() })
+}
+
+#[tauri::command]
+pub fn logs_error_count(state: State<'_, AppState>, since_seq: i64) -> Value {
+    json!({ "count": state.error_count(since_seq), "latest_seq": state.latest_seq() })
+}
+
+#[tauri::command]
+pub fn diagnostics_get(state: State<'_, AppState>) -> Value {
+    state.diagnostics()
+}
+
+#[tauri::command]
+pub fn diagnostics_copy(app: AppHandle, state: State<'_, AppState>) -> Value {
+    let text = state.diagnostics_text();
+    let bytes = text.len();
+    crate::shell::copy_to_clipboard(&app, &text);
+    json!({ "copied": true, "bytes": bytes })
+}
+
+#[tauri::command]
+pub fn diagnostics_save(state: State<'_, AppState>) -> Value {
+    json!({ "saved": false, "path": state.log_dir() })
+}
+
+#[tauri::command]
+pub fn app_version(state: State<'_, AppState>) -> Value {
+    state.version_info()
+}
+
+#[tauri::command]
+pub fn app_check_for_updates() -> Value {
+    json!({ "state": "idle", "checked_at": chrono_now() })
+}
+
+#[tauri::command]
+pub fn app_open_external(app: AppHandle, url: String) -> Value {
+    crate::shell::open_external(&app, &url);
+    json!({ "opened": true })
+}
+
+#[tauri::command]
+pub fn app_refresh_now(state: State<'_, AppState>) -> Value {
+    state.bump_snapshot_version();
+    fixture(&state, "snapshot")
+}
+
+#[tauri::command]
+pub fn app_quit(app: AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
+pub fn credential_state(state: State<'_, AppState>) -> Value {
+    state.credential_state()
+}
+
+#[tauri::command]
+pub fn credential_save(state: State<'_, AppState>, secret: String) -> Value {
+    state.save_credential(&secret)
+}
+
+#[tauri::command]
+pub fn credential_test(state: State<'_, AppState>) -> Value {
+    state.test_credential()
+}
+
+#[tauri::command]
+pub fn credential_disconnect(state: State<'_, AppState>, delete_history: bool) -> Value {
+    state.disconnect_credential(delete_history)
+}
+
+#[tauri::command]
+pub fn data_export(state: State<'_, AppState>) -> Value {
+    json!({ "exported": false, "path": state.log_dir() })
+}
+
+#[tauri::command]
+pub fn data_clear(_state: State<'_, AppState>, confirmed: bool) -> Value {
+    json!({ "cleared": confirmed })
+}
+
+#[tauri::command]
+pub fn data_vacuum() -> Value {
+    json!({ "vacuumed": true, "stats": {} })
+}
+
+#[tauri::command]
+pub fn data_open_db_folder(state: State<'_, AppState>) -> Value {
+    json!({ "opened": state.log_dir() })
+}
+
+fn chrono_now() -> String {
+    // Avoid a chrono dependency in Phase 1; the renderer only displays this.
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("{secs}")
+}
