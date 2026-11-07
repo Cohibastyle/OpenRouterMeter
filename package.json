@@ -26,6 +26,7 @@
   "build": {
     "appId": "ai.openrouter.widget",
     "productName": "OpenRouter Meter",
+    "afterPack": "scripts/afterPack.mjs",
     "files": [
       "dist/**/*",
       "!dist/mac*/**",
@@ -39,9 +40,16 @@
       "target": [
         "dmg"
       ],
+      "electronLanguages": [
+        "en",
+        "en_GB"
+      ],
       "extendInfo": {
         "LSUIElement": 1
       }
+    },
+    "dmg": {
+      "format": "UDBZ"
     }
   }
 }
