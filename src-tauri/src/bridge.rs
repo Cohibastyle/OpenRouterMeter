@@ -41,16 +41,7 @@ pub fn charts_get(state: State<'_, AppState>, params: Value) -> Value {
 
 #[tauri::command]
 pub fn requests_list(state: State<'_, AppState>, limit: usize, key_id: Option<String>) -> Value {
-    let all = fixture(&state, "requests");
-    let rows = all.as_array().cloned().unwrap_or_default();
-    let filtered: Vec<Value> = match key_id {
-        Some(id) => rows
-            .into_iter()
-            .filter(|r| r["key_id"].as_str() == Some(id.as_str()))
-            .collect(),
-        None => rows,
-    };
-    Value::Array(filtered.into_iter().take(limit).collect())
+    state.requests(limit, key_id.as_deref())
 }
 
 #[tauri::command]
@@ -61,7 +52,7 @@ pub fn requests_breakdown(state: State<'_, AppState>, params: Value) -> Value {
 
 #[tauri::command]
 pub fn keys_list(state: State<'_, AppState>) -> Value {
-    fixture(&state, "keys")
+    state.keys()
 }
 
 #[tauri::command]
@@ -118,8 +109,13 @@ pub fn settings_reset(state: State<'_, AppState>, group: String) -> Value {
 
 #[tauri::command]
 pub fn logs_query(state: State<'_, AppState>, query: Value) -> Value {
-    let _ = query;
-    state.logs()
+    let limit = query["limit"].as_u64().unwrap_or(200) as usize;
+    let stored = state.stored_logs(limit);
+    if stored.as_array().map(|a| a.is_empty()).unwrap_or(true) {
+        state.logs()
+    } else {
+        stored
+    }
 }
 
 #[tauri::command]
@@ -221,18 +217,21 @@ pub fn data_export(state: State<'_, AppState>) -> Value {
 }
 
 #[tauri::command]
-pub fn data_clear(_state: State<'_, AppState>, confirmed: bool) -> Value {
-    json!({ "cleared": confirmed })
+pub fn data_clear(state: State<'_, AppState>, confirmed: bool) -> Value {
+    if !confirmed {
+        return json!({ "cleared": false });
+    }
+    json!({ "cleared": state.clear_data() })
 }
 
 #[tauri::command]
-pub fn data_vacuum() -> Value {
-    json!({ "vacuumed": true, "stats": {} })
+pub fn data_vacuum(state: State<'_, AppState>) -> Value {
+    json!({ "vacuumed": state.vacuum(), "stats": {} })
 }
 
 #[tauri::command]
 pub fn data_open_db_folder(state: State<'_, AppState>) -> Value {
-    json!({ "opened": state.log_dir() })
+    json!({ "opened": state.db_path() })
 }
 
 fn chrono_now() -> String {

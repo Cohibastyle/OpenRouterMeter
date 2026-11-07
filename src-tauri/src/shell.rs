@@ -17,7 +17,9 @@ const DEFAULT_WIDTH: f64 = 320.0;
 const DEFAULT_HEIGHT: f64 = 240.0;
 
 pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
-    app.manage(AppState::new());
+    let state = AppState::new();
+    state.seed_if_empty();
+    app.manage(state);
     app.manage(GhostFlag(std::sync::atomic::AtomicBool::new(false)));
 
     #[cfg(target_os = "macos")]

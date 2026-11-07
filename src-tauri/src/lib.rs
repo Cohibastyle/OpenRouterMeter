@@ -1,4 +1,5 @@
 mod bridge;
+mod db;
 mod shell;
 mod state;
 

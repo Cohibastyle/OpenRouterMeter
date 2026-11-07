@@ -2,9 +2,12 @@
 //! the on-disk store; the accessors keep their signatures.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde_json::{json, Value};
+
+use crate::db::Db;
 
 const SNAPSHOT: &str = include_str!("../fixtures/snapshot.json");
 const REQUESTS: &str = include_str!("../fixtures/requests.json");
@@ -13,6 +16,8 @@ const SETTINGS: &str = include_str!("../fixtures/settings.json");
 
 pub struct AppState {
     fixtures: HashMap<&'static str, Value>,
+    db: Mutex<Option<Db>>,
+    data_dir: PathBuf,
     settings: Mutex<Value>,
     logs: Mutex<Vec<Value>>,
     tailing: Mutex<bool>,
@@ -29,8 +34,19 @@ impl AppState {
         fixtures.insert("chart", empty_chart());
         fixtures.insert("breakdown", json!({ "group_by": "model", "rows": [], "total_micro": 0 }));
 
+        let data_dir = data_dir();
+        let db = match Db::open(&data_dir) {
+            Ok(db) => Some(db),
+            Err(e) => {
+                eprintln!("[db] open failed: {e}");
+                None
+            }
+        };
+
         Self {
             fixtures,
+            db: Mutex::new(db),
+            data_dir,
             settings: Mutex::new(
                 serde_json::from_str(SETTINGS).unwrap_or_else(|_| default_settings()),
             ),
@@ -113,7 +129,81 @@ impl AppState {
     }
 
     pub fn log_dir(&self) -> String {
-        dirs_log_dir()
+        self.data_dir.to_string_lossy().to_string()
+    }
+
+    pub fn db_path(&self) -> String {
+        self.data_dir.join("widget.db").to_string_lossy().to_string()
+    }
+
+    /// Seed the database from the fixture rows on first run, so the storage
+    /// layer is exercised rather than bypassed.
+    pub fn seed_if_empty(&self) {
+        let mut guard = match self.db.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        let Some(db) = guard.as_mut() else { return };
+        if db.count_requests() > 0 {
+            return;
+        }
+        let rows = self.fixture("requests");
+        if let Some(list) = rows.as_array() {
+            let _ = db.insert_requests(list);
+        }
+        let keys = self.fixture("keys");
+        if let Some(list) = keys.as_array() {
+            let _ = db.upsert_keys(list);
+        }
+    }
+
+    pub fn requests(&self, limit: usize, key_id: Option<&str>) -> Value {
+        let guard = match self.db.lock() {
+            Ok(g) => g,
+            Err(_) => return Value::Array(Vec::new()),
+        };
+        match guard.as_ref() {
+            Some(db) => Value::Array(db.list_requests(limit, key_id)),
+            None => Value::Array(Vec::new()),
+        }
+    }
+
+    pub fn keys(&self) -> Value {
+        let guard = match self.db.lock() {
+            Ok(g) => g,
+            Err(_) => return Value::Array(Vec::new()),
+        };
+        match guard.as_ref() {
+            Some(db) => Value::Array(db.list_keys()),
+            None => Value::Array(Vec::new()),
+        }
+    }
+
+    pub fn stored_logs(&self, limit: usize) -> Value {
+        let guard = match self.db.lock() {
+            Ok(g) => g,
+            Err(_) => return Value::Array(Vec::new()),
+        };
+        match guard.as_ref() {
+            Some(db) => Value::Array(db.query_logs(limit)),
+            None => Value::Array(Vec::new()),
+        }
+    }
+
+    pub fn vacuum(&self) -> bool {
+        let guard = match self.db.lock() {
+            Ok(g) => g,
+            Err(_) => return false,
+        };
+        guard.as_ref().map(|db| db.vacuum().is_ok()).unwrap_or(false)
+    }
+
+    pub fn clear_data(&self) -> bool {
+        let guard = match self.db.lock() {
+            Ok(g) => g,
+            Err(_) => return false,
+        };
+        guard.as_ref().map(|db| db.clear_all().is_ok()).unwrap_or(false)
     }
 
     pub fn diagnostics(&self) -> Value {
@@ -124,7 +214,7 @@ impl AppState {
                 "app_version": env!("CARGO_PKG_VERSION"),
                 "host": "tauri",
             },
-            "storage": { "path": self.log_dir() },
+            "storage": { "path": self.db_path() },
             "performance": {},
             "bundle": {},
         })
@@ -182,10 +272,10 @@ impl AppState {
     }
 }
 
-fn dirs_log_dir() -> String {
+fn data_dir() -> PathBuf {
     std::env::var("HOME")
-        .map(|h| format!("{h}/Library/Application Support/OpenRouter Meter"))
-        .unwrap_or_else(|_| ".".to_string())
+        .map(|h| PathBuf::from(format!("{h}/Library/Application Support/OpenRouter Meter")))
+        .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 fn empty_chart() -> Value {
