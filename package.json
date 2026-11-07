@@ -1,7 +1,7 @@
 {
   "name": "openrouter-desktop-widget",
   "productName": "OpenRouter Meter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Always-on-top desktop widget for OpenRouter spending and token usage",
   "author": "Cohibastyle",
   "private": true,
