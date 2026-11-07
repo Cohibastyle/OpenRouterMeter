@@ -2565,6 +2565,7 @@ dependencies = [
 name = "openrouter-meter"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "rusqlite",
  "serde",
  "serde_json",

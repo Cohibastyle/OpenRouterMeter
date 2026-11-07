@@ -1,6 +1,8 @@
+mod accounting;
 mod bridge;
 mod db;
 mod shell;
+mod snapshot;
 mod state;
 
 pub fn run() {

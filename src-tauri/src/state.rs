@@ -157,6 +157,94 @@ impl AppState {
         }
     }
 
+    /// Build a snapshot from the stored rows. This is the Phase 3 replacement
+    /// for serving the fixture: the numbers now come from SQLite and the Rust
+    /// accounting, not from a precomputed JSON file.
+    pub fn live_snapshot(&self) -> Value {
+        let now = now_ms();
+        let requests = self.all_requests();
+        let version = {
+            let mut v = self.snapshot_version.lock().unwrap_or_else(|e| e.into_inner());
+            *v += 1;
+            *v
+        };
+
+        let settings = self.settings();
+        let scope = settings["view"]["scope"].clone();
+        let scope = if scope.is_null() { json!({ "kind": "all" }) } else { scope };
+
+        let sample = self.has_sample_rows();
+        let account = self.account_info();
+
+        let inputs = crate::snapshot::SnapshotInputs {
+            now,
+            requests: &requests,
+            scope,
+            account,
+            collection_status: json!({
+                "last_success": crate::accounting::format_time(now),
+                "last_error_code": Value::Null,
+                "last_error_message": Value::Null,
+                "last_error_at": Value::Null,
+                "retry_at": Value::Null,
+                "backoff_ms": 0,
+                "stale": false,
+                "expected_delay_sec": 60,
+            }),
+            coverage: json!({
+                "earliest_reliable": Value::Null,
+                "latest_source_date": Value::Null,
+                "spend": "full",
+                "tokens": "full",
+                "requests": "full",
+                "request_source": "full_account",
+                "warnings": [],
+            }),
+            source_granularity_ms: 60_000,
+            collection_started_at: None,
+            gaps: &[],
+            collection_ranges: &[],
+            retention_horizon: None,
+            time_zone: "UTC".to_string(),
+            sample,
+            snapshot_version: version,
+        };
+
+        crate::snapshot::build_snapshot(&inputs)
+    }
+
+    fn all_requests(&self) -> Vec<Value> {
+        let guard = match self.db.lock() {
+            Ok(g) => g,
+            Err(_) => return Vec::new(),
+        };
+        match guard.as_ref() {
+            Some(db) => db.list_requests(100_000, None),
+            None => Vec::new(),
+        }
+    }
+
+    fn has_sample_rows(&self) -> bool {
+        let guard = match self.db.lock() {
+            Ok(g) => g,
+            Err(_) => return false,
+        };
+        guard.as_ref().map(|db| db.has_sample_rows()).unwrap_or(false)
+    }
+
+    fn account_info(&self) -> Value {
+        let has = self.credential.lock().map(|c| c.is_some()).unwrap_or(false);
+        json!({
+            "connected": has,
+            "state": if has { "connected" } else { "not_connected" },
+            "label": Value::Null,
+            "last4": Value::Null,
+            "saved_at": Value::Null,
+            "total_credits_micro": Value::Null,
+            "total_usage_micro": Value::Null,
+        })
+    }
+
     pub fn requests(&self, limit: usize, key_id: Option<&str>) -> Value {
         let guard = match self.db.lock() {
             Ok(g) => g,
@@ -270,6 +358,13 @@ impl AppState {
         }
         json!({ "ok": true, "history_deleted": delete_history })
     }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 fn data_dir() -> PathBuf {

@@ -15,17 +15,17 @@ fn fixture(state: &AppState, name: &str) -> Value {
 
 #[tauri::command]
 pub fn account_status(state: State<'_, AppState>) -> Value {
-    fixture(&state, "snapshot")["account"].clone()
+    state.live_snapshot()["account"].clone()
 }
 
 #[tauri::command]
 pub fn snapshot_get(state: State<'_, AppState>) -> Value {
-    fixture(&state, "snapshot")
+    state.live_snapshot()
 }
 
 #[tauri::command]
 pub fn summary_get(state: State<'_, AppState>, metric: String) -> Value {
-    let snapshot = fixture(&state, "snapshot");
+    let snapshot = state.live_snapshot();
     json!({
         "windows": snapshot["windows"],
         "metric": metric,
@@ -182,8 +182,7 @@ pub fn app_open_external(app: AppHandle, url: String) -> Value {
 
 #[tauri::command]
 pub fn app_refresh_now(state: State<'_, AppState>) -> Value {
-    state.bump_snapshot_version();
-    fixture(&state, "snapshot")
+    state.live_snapshot()
 }
 
 #[tauri::command]
