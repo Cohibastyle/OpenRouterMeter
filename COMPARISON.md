@@ -63,9 +63,13 @@ must reproduce it exactly. That test caught a genuine bug: the local day and
 month boundaries assumed UTC, which shifted the today total by 800k
 micro-dollars in a non-UTC zone.
 
-34 Rust tests pass, including exact parity on all five windows, today, month,
+35 Rust tests pass, including exact parity on all five windows, today, month,
 and the latest request, plus the logger's redaction and rotation, the update
 check's version comparison, and the refresh loop's cadence parsing.
+
+The cross-check pins its UTC offset rather than reading the ambient zone. It
+originally did not, so the fixture was generated in KST and the assertion failed
+in UTC — the first CI run to actually execute the workflow caught it.
 
 ## Rendering
 

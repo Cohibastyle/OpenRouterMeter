@@ -157,6 +157,17 @@ Then push a `v*` tag. `.github/workflows/release-mac.yml` builds `aarch64` and
 release. It can also be run by hand with `workflow_dispatch`, which is the right
 way to test a workflow change before tagging.
 
+Verified on run `42389909664`: both architectures succeed and the artifacts are
+2.96 MB (`aarch64`) and 3.16 MB (`x86_64`).
+
+Two things the first real run caught, both invisible locally:
+
+- The workflow ran `cargo test` before `npm run build`, so
+  `tauri::generate_context!()` panicked on a missing `frontendDist`. A local
+  checkout always has `dist/` left over from a previous build.
+- The cross-check compared day boundaries from the ambient system zone, so it
+  passed in KST and failed in UTC. Both sides now accept a pinned offset.
+
 ## Database
 
 - Location: `~/Library/Application Support/OpenRouter Meter/widget.db`
