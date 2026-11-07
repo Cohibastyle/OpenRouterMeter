@@ -84,8 +84,15 @@ Coverage:
 The Rust side has its own suite:
 
 ```bash
+npm run build      # required first, see below
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
+
+`npm run build` must run first. `tauri::generate_context!()` reads
+`frontendDist` (`../dist/renderer`) at compile time and panics when the directory
+is missing, so a clean checkout cannot compile the crate before the frontend is
+built. A local build usually has `dist/` left over from a previous run, which
+hides the problem; CI hit it on the first real run.
 
 `src-tauri/src/snapshot.rs` cross-checks the Rust accounting against the
 TypeScript implementation. `scripts/gen-crosscheck.mjs` runs the real

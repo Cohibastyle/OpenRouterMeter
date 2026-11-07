@@ -46,11 +46,15 @@ jobs:
       - name: Unit tests
         run: npm test
 
-      - name: Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
-
+      # The frontend must exist before anything compiles the Rust crate:
+      # `tauri::generate_context!()` reads `frontendDist` at compile time and
+      # panics when the directory is missing. A local build always has it left
+      # over from a previous run, so this only fails on a clean checkout.
       - name: Build frontend
         run: npm run build
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
 
       # The frontend is bundled into the binary, so the DMG contains only the
       # app and the WebKit shell it borrows from the system: no browser runtime.
