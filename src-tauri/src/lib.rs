@@ -1,5 +1,6 @@
 mod accounting;
 mod bridge;
+mod credentials;
 mod db;
 mod shell;
 mod snapshot;

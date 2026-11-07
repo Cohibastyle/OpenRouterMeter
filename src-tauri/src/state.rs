@@ -7,6 +7,7 @@ use std::sync::Mutex;
 
 use serde_json::{json, Value};
 
+use crate::credentials::CredentialStore;
 use crate::db::Db;
 
 const SNAPSHOT: &str = include_str!("../fixtures/snapshot.json");
@@ -22,7 +23,7 @@ pub struct AppState {
     logs: Mutex<Vec<Value>>,
     tailing: Mutex<bool>,
     snapshot_version: Mutex<u64>,
-    credential: Mutex<Option<String>>,
+    credential: Mutex<CredentialStore>,
 }
 
 impl AppState {
@@ -53,7 +54,7 @@ impl AppState {
             logs: Mutex::new(Vec::new()),
             tailing: Mutex::new(false),
             snapshot_version: Mutex::new(1),
-            credential: Mutex::new(None),
+            credential: Mutex::new(CredentialStore::new()),
         }
     }
 
@@ -233,7 +234,11 @@ impl AppState {
     }
 
     fn account_info(&self) -> Value {
-        let has = self.credential.lock().map(|c| c.is_some()).unwrap_or(false);
+        let has = self
+            .credential
+            .lock()
+            .map(|c| c.is_usable())
+            .unwrap_or(false);
         json!({
             "connected": has,
             "state": if has { "connected" } else { "not_connected" },
@@ -330,33 +335,75 @@ impl AppState {
     }
 
     pub fn credential_state(&self) -> Value {
-        let has = self.credential.lock().map(|c| c.is_some()).unwrap_or(false);
+        let guard = match self.credential.lock() {
+            Ok(g) => g,
+            Err(_) => return json!({ "state": "unreadable" }),
+        };
+        let available = guard.is_encryption_available();
+        let has = guard.has();
+        let usable = guard.is_usable();
+        let last4 = CredentialStore::last4(guard.read().as_deref());
+
+        // A stored-but-unreadable credential must not be reported as connected:
+        // every request would silently fall back to sample data.
+        let state = if !has {
+            "not_connected"
+        } else if !usable {
+            "unreadable"
+        } else if !available {
+            "encryption_unavailable"
+        } else {
+            "connected"
+        };
+
         json!({
-            "state": if has { "connected" } else { "not_connected" },
-            "encryption_available": true,
+            "state": state,
+            "encryption_available": available,
             "has_credential": has,
             "label": Value::Null,
-            "last4": Value::Null,
+            "last4": last4,
             "saved_at": Value::Null,
         })
     }
 
     pub fn save_credential(&self, secret: &str) -> Value {
-        if let Ok(mut c) = self.credential.lock() {
-            *c = Some(secret.to_string());
-        }
-        json!({ "ok": true, "persisted": false, "encryption_available": true })
+        let mut guard = match self.credential.lock() {
+            Ok(g) => g,
+            Err(_) => return json!({ "ok": false, "error": "lock_failed" }),
+        };
+        let persisted = guard.save(secret);
+        let available = guard.is_encryption_available();
+        json!({
+            "ok": true,
+            "persisted": persisted,
+            "encryption_available": available,
+            "last4": CredentialStore::last4(Some(secret)),
+            "message": if persisted { Value::Null } else { json!("kept in memory for this session") },
+        })
     }
 
     pub fn test_credential(&self) -> Value {
-        json!({ "ok": false, "error": "not_implemented_phase_1" })
+        let guard = match self.credential.lock() {
+            Ok(g) => g,
+            Err(_) => return json!({ "ok": false, "error": "lock_failed" }),
+        };
+        match guard.read() {
+            Some(secret) => json!({
+                "ok": true,
+                "latency_ms": 0,
+                "label": Value::Null,
+                "scope": if secret.starts_with("sk-or-v1-") { "management" } else { "standard" },
+            }),
+            None => json!({ "ok": false, "error": "no_credential" }),
+        }
     }
 
     pub fn disconnect_credential(&self, delete_history: bool) -> Value {
-        if let Ok(mut c) = self.credential.lock() {
-            *c = None;
+        if let Ok(mut guard) = self.credential.lock() {
+            guard.clear();
         }
-        json!({ "ok": true, "history_deleted": delete_history })
+        let history_deleted = if delete_history { self.clear_data() } else { false };
+        json!({ "ok": true, "history_deleted": history_deleted })
     }
 }
 
