@@ -48,9 +48,9 @@ drift between the two hosts.
 |---|---|---|
 | `src/main/index.ts` | 1,728 | `src-tauri/src/{shell,bridge}.rs` |
 | `src/main/db/database.ts` | 656 | `src-tauri/src/db.rs` (rusqlite) |
-| `src/main/collectors/openrouter.ts` | 471 | `src-tauri/src/collector.rs` (reqwest) |
-| `src/main/logging/logger.ts` | 184 | not yet ported |
-| `src/main/snapshot.ts` | 126 | `src-tauri/src/snapshot.rs` |
+| `src/main/collectors/openrouter.ts` | 471 | `src-tauri/src/collector.rs` (reqwest); parsers kept in `src/shared/` |
+| `src/main/logging/logger.ts` | 184 | `src-tauri/src/logging.rs` |
+| `src/main/snapshot.ts` | 126 | `src-tauri/src/snapshot.rs`, kept in `src/shared/` as the cross-check oracle |
 | `src/main/credentials.ts` | 90 | `src-tauri/src/credentials.rs` (Keychain) |
 | `src/shared/{money,granularity,windows,chart}` | 470 | `src-tauri/src/{accounting,chart}.rs` |
 
@@ -63,8 +63,9 @@ must reproduce it exactly. That test caught a genuine bug: the local day and
 month boundaries assumed UTC, which shifted the today total by 800k
 micro-dollars in a non-UTC zone.
 
-16 Rust tests pass, including exact parity on all five windows, today, month,
-and the latest request.
+28 Rust tests pass, including exact parity on all five windows, today, month,
+and the latest request, plus the logger's redaction and rotation and the update
+check's version comparison.
 
 ## Rendering
 
@@ -115,34 +116,31 @@ error.
 
 ## Not yet done
 
-- The structured logger and log rotation are not ported; `logs:*` reads from the
-  database but nothing writes to it yet.
 - Diagnostics reports a reduced bundle.
-- No code signing or notarization on either build.
-- The Tauri build has no update check; `app:checkForUpdates` returns `idle`.
+- No code signing or notarization.
 
-## What still depends on the Electron host
+## The Electron host is gone
 
-The Electron host is therefore **not** removable yet. Deleting `src/main/` would
-break the following, which is why the two hosts are kept side by side:
+Electron was removed once the port was complete. The comparison above is kept as
+the record of why the port was worth doing: the same app went from an 80 MB DMG
+to 2.9 MB, and from 934 ms and 425 MB at startup to 70 ms and 96 MB.
 
-- **`src/renderer/` and `src/shared/` are shared, not Electron.** Roughly 8,100
-  lines the Tauri build compiles too, including `src/shared/widgetApi.ts`, the
-  contract both bridges implement.
-- **The cross-check oracle.** `scripts/gen-crosscheck.mjs` and
-  `scripts/gen-fixtures.mjs` run the real `buildSnapshot` from
-  `src/main/snapshot.ts` to generate the fixtures the Rust accounting must
-  reproduce exactly. That test is what caught the UTC day-boundary bug, so
-  deleting its reference would leave the Rust math unchecked against itself.
-- **`tests/sourceDate.test.ts`** imports `parseSourceDate` from
-  `src/main/collectors/openrouter.ts`. It is pure date parsing with no host
-  dependency, so it should move to `src/shared/` before the host goes.
-- **The shipped DMGs.** `.github/workflows/release-mac.yml` builds with
-  `electron-builder`; there is no Tauri release job.
-- **Log rotation and the structured logger**, which have no Rust equivalent.
+What made the removal safe, in the order it was done:
 
-The order that makes the host removable is: port the logger, port
-`app:checkForUpdates`, move `parseSourceDate` into `src/shared/`, then port the
-cross-check generator to Rust or freeze the fixtures, and last replace the
-release workflow. Until then, removing `src/main/` trades a working build for a
-broken one.
+1. **The logger and the update check were ported.** Until then the Log section
+   read zero entries and `app:checkForUpdates` returned `idle`, so deleting the
+   host would have removed working features rather than duplicated ones.
+2. **`parseSourceDate` moved to `src/shared/`.** It is pure date parsing, so it
+   never belonged in the host.
+3. **The cross-check oracle moved rather than died.** `buildSnapshot`,
+   `generateSampleRequests` and the OpenRouter response parsers import nothing
+   but `src/shared/`, so they now live there. `scripts/gen-crosscheck.mjs` still
+   runs the TypeScript `buildSnapshot` to produce the fixtures the Rust
+   accounting must reproduce exactly, which keeps the port checked against
+   something other than itself.
+4. **The release workflow was replaced**, not deleted: it now builds with
+   `cargo tauri build` for both `aarch64-apple-darwin` and `x86_64-apple-darwin`.
+
+`src/renderer/` and `src/shared/` were never Electron code. They are the UI and
+the shared logic, roughly 8,100 lines that both hosts compiled, and they are
+unchanged by the removal.
