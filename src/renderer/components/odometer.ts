@@ -6,9 +6,9 @@
  * vertical strip of 0-9 translated to the digit's position, so the number reads
  * as a counter rolling to its new value instead of a value that jumps.
  *
- * Each column makes one pass and stops: a digit travels at most nine steps from
- * its old value to its new one, and a digit that does not change does not move
- * at all. A carry-chain counter would instead drag every column through the
+ * Each column makes one pass and stops: a digit travels at most nine steps up
+ * or down from its old value to its new one, and a digit that does not change
+ * does not move at all. A carry-chain counter would instead drag every column through the
  * whole numeric delta, so `$4.123` to `$6.456` would spin the last column 2333
  * times; here the same change is eleven digit steps.
  *
@@ -41,11 +41,11 @@ const WINDOW_OFFSET_EM = (CELL_EM - WINDOW_EM) / 2;
 /**
  * Cells in one column's strip.
  *
- * A single pass can end as far as eighteen cells from the start (a column that
- * wraps, such as 8 to 2 in four steps), so the strip holds more than two
- * decades. It only ever translates forward through them.
+ * The strip needs headroom above and below the parked digit so a column can
+ * roll either direction by up to nine steps without running off-strip.
  */
-const STRIP_CELLS = 21;
+const STRIP_HEADROOM = 10;
+const STRIP_CELLS = 31;
 
 /**
  * Brisk cascade timing, chosen against four candidate arrival curves.
@@ -91,7 +91,7 @@ export interface ColumnRoll {
   from: number;
   /** Digit it finishes on. */
   to: number;
-  /** Digits travelled, 0-9: a single pass, never a lap. */
+  /** Signed digits travelled, -9..9: one pass, never a lap. */
   steps: number;
   /** Time from the start of the roll at which the column begins moving. */
   startMs: number;
@@ -128,17 +128,16 @@ function compareDigits(fromText: string, toText: string): number {
 /**
  * Plan a single-pass roll from one formatted value to another.
  *
- * Every column travels the shortest forward distance from its old digit to its
- * new one, so at most nine digits, and a column whose digit does not change is
- * left out entirely. Columns are returned least significant first, in the order
- * the cascade plays.
+ * Every column travels the shortest distance in the chosen direction from its
+ * old digit to its new one, so at most nine digits, and a column whose digit
+ * does not change is left out entirely. Columns are returned least significant
+ * first, in the order the cascade plays.
  *
  * `windowMs` is a ceiling rather than a target: the cascade runs at its natural
  * pace and is only compressed if it would overrun the window.
  *
  * Returns null when the strings do not share a shape (a digit that appears or
- * disappears cannot roll in place), when the value does not rise, or when there
- * is nothing to animate.
+ * disappears cannot roll in place), or when there is nothing to animate.
  */
 export function planRoll(fromText: string, toText: string, windowMs: number): RollPlan | null {
   if (!(windowMs > 0) || fromText === toText) return null;
@@ -147,9 +146,8 @@ export function planRoll(fromText: string, toText: string, windowMs: number): Ro
     if (isDigit(fromText[i]!) !== isDigit(toText[i]!)) return null;
   }
 
-  // A roll only runs forwards. A fall is repainted instead, because counting
-  // down through the old value would read as a second, separate event.
-  if (compareDigits(fromText, toText) <= 0) return null;
+  const direction = compareDigits(fromText, toText);
+  if (direction === 0) return null;
 
   const rolling: Array<Omit<ColumnRoll, 'startMs' | 'stepMs'>> = [];
   for (let i = toText.length - 1; i >= 0; i -= 1) {
@@ -157,7 +155,11 @@ export function planRoll(fromText: string, toText: string, windowMs: number): Ro
     if (!isDigit(char)) continue;
     const from = Number(fromText[i]!);
     const to = Number(char);
-    const steps = (to - from + 10) % 10;
+    const raw = to - from;
+    const steps =
+      direction > 0
+        ? (raw + 10) % 10
+        : -((from - to + 10) % 10);
     if (steps === 0) continue;
     rolling.push({ index: i, from, to, steps });
   }
@@ -174,7 +176,7 @@ export function planRoll(fromText: string, toText: string, windowMs: number): Ro
     stepMs: STEP_MS,
   }));
   const naturalMs = Math.max(
-    ...natural.map((column) => column.startMs + column.steps * column.stepMs),
+    ...natural.map((column) => column.startMs + Math.abs(column.steps) * column.stepMs),
   );
   const fit = Math.min(1, windowMs / naturalMs);
   const columns = natural.map((column) => ({
@@ -182,7 +184,7 @@ export function planRoll(fromText: string, toText: string, windowMs: number): Ro
     startMs: column.startMs * fit,
     stepMs: column.stepMs * fit,
   }));
-  const totalSteps = rolling.reduce((sum, column) => sum + column.steps, 0);
+  const totalSteps = rolling.reduce((sum, column) => sum + Math.abs(column.steps), 0);
   return { columns, durationMs: naturalMs * fit, totalSteps };
 }
 
@@ -231,16 +233,16 @@ function buildColumns(
     column.className = 'odo';
     const strip = document.createElement('span');
     strip.className = 'odo-strip';
-    // The strip is more than two decades deep, so a column can travel a single
-    // pass of up to nine digits forwards without running out of cells.
+    // The strip is centered around the parked digit so a single pass of up to
+    // nine digits can roll up or down without leaving the strip.
     for (let cell = 0; cell < STRIP_CELLS; cell += 1) {
       const digit = document.createElement('span');
       digit.className = 'odo-cell';
-      digit.textContent = String(cell % 10);
+      digit.textContent = String((((cell - STRIP_HEADROOM) % 10) + 10) % 10);
       strip.appendChild(digit);
     }
     const from = Number(fromText[i]!);
-    strip.style.transform = translateFor(from);
+    strip.style.transform = translateFor(from + STRIP_HEADROOM);
     column.appendChild(strip);
     fragment.appendChild(column);
     columns.push({ strip, index: i, from });
@@ -252,9 +254,7 @@ function buildColumns(
  * Roll `element` from `from` to `to` over `windowMs`.
  *
  * The element is left holding the exact formatted target text once the roll
- * finishes, so a value that gained or lost a digit settles cleanly. A value that
- * falls is painted directly: a backwards roll would read as a second event
- * rather than as the same number decreasing.
+ * finishes, so a value that gained or lost a digit settles cleanly.
  */
 export function animateHeadline(
   element: HTMLElement,
@@ -269,14 +269,6 @@ export function animateHeadline(
   element.setAttribute('aria-label', toText);
 
   if (fromText === toText || !motionAllowed() || windowMs <= 0) {
-    element.textContent = toText;
-    onDone?.();
-    return;
-  }
-
-  // A fall is repainted, not rolled: counting down through the old value reads
-  // as a second event, and a backwards roll has no forward pass to make.
-  if (compareDigits(fromText, toText) < 0) {
     element.textContent = toText;
     onDone?.();
     return;
@@ -305,7 +297,9 @@ export function animateHeadline(
         1,
         Math.max(0, elapsed - roll.startMs) / (roll.steps * roll.stepMs),
       );
-      column.strip.style.transform = translateFor(roll.from + roll.steps * easeInOutQuad(progress));
+      column.strip.style.transform = translateFor(
+        roll.from + STRIP_HEADROOM + roll.steps * easeInOutQuad(progress),
+      );
     }
     if (elapsed < plan.durationMs) requestAnimationFrame(frame);
     else {

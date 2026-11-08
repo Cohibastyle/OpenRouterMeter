@@ -67,6 +67,7 @@ pub fn start(app: AppHandle, stop: Arc<AtomicBool>) {
             );
         }
 
+        let mut was_visible = true;
         while !stop.load(Ordering::Relaxed) {
             std::thread::sleep(TICK);
 
@@ -76,9 +77,24 @@ pub fn start(app: AppHandle, stop: Arc<AtomicBool>) {
             // A hidden widget does no work when the user asked it to pause. The
             // timers are rebased rather than left to accumulate, so showing the
             // window again does not fire a burst of catch-up refreshes.
-            if cadence.pause_when_hidden && !is_visible(&app) {
+            let visible = is_visible(&app);
+            if cadence.pause_when_hidden && !visible {
                 last_refresh = Instant::now();
                 last_chart = Instant::now();
+                was_visible = false;
+                continue;
+            }
+
+            // On the first tick after the window is shown again, refresh at
+            // once: the displayed snapshot is as stale as the time the window
+            // spent hidden, and waiting a full interval would leave the chart
+            // anchored to a window that has already scrolled off its axis.
+            if !was_visible {
+                was_visible = true;
+                last_refresh = Instant::now();
+                last_chart = Instant::now();
+                refresh_once(&app, &state);
+                let _ = app.emit("charts:invalidate", ());
                 continue;
             }
 

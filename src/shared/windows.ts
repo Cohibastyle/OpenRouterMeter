@@ -32,9 +32,10 @@ export interface WindowInputs {
  * Compute the five trailing windows from FSD section 10.3.
  *
  * Windows are trailing and overlapping. They are never summed. A window is
- * computable only when the finest source granularity is at most one quarter of
- * the window width; otherwise it is unavailable with reason source_granularity
- * and is never interpolated.
+ * computable only when the finest source granularity is no coarser than the
+ * window itself; otherwise it is unavailable with reason source_granularity
+ * and is never interpolated. A finer-but-still-coarse source simply produces
+ * missing bins, which the window sums as partial coverage.
  */
 export function computeWindows(inputs: WindowInputs): WindowCell[] {
   const asOf = new Date(inputs.now).toISOString();

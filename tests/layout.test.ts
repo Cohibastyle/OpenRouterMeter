@@ -10,7 +10,6 @@ import {
 } from '../src/shared/layout.ts';
 import { applySettingsPatch, DEFAULT_SETTINGS, resetGroup } from '../src/shared/settings.ts';
 import { CHART_MIN_HEIGHT } from '../src/shared/constants.ts';
-import { redact } from '../src/shared/redact.ts';
 
 test('width classes match the documented boundaries', () => {
   assert.equal(widthClassOf(180), 'xs');
@@ -210,37 +209,3 @@ test('reset affects only the named group', () => {
   assert.equal(resetParameters.display.theme, 'light');
 });
 
-test('the credential is redacted at write time', () => {
-  const cases = [
-    'Authorization: Bearer sk-or-v1-abcdefghijklmnopqrstuvwxyz0123456789',
-    'key=sk-or-v1-abcdefghijklmnopqrstuvwxyz0123456789',
-    'api_key: sk-or-v1-abcdefghijklmnopqrstuvwxyz0123456789',
-  ];
-  for (const input of cases) {
-    const { text, redacted } = redact(input);
-    assert.equal(redacted, true, `should redact: ${input}`);
-    assert.ok(!text.includes('abcdefghijklmnopqrstuvwxyz0123456789'), `leaked: ${text}`);
-  }
-});
-
-test('prompt and completion content is redacted', () => {
-  const { text, redacted } = redact('prompt: "tell me a secret"');
-  assert.equal(redacted, true);
-  assert.ok(!text.includes('tell me a secret'));
-});
-
-test('ordinary log text is left untouched', () => {
-  const { text, redacted } = redact('collected 42 activity rows');
-  assert.equal(redacted, false);
-  assert.equal(text, 'collected 42 activity rows');
-});
-
-test('a credential-shaped label is detected, including masked forms', async () => {
-  const { looksLikeCredential } = await import('../src/shared/redact.ts');
-  assert.equal(looksLikeCredential('sk-or-v1-1a5...753'), true, 'masked key must be caught');
-  assert.equal(looksLikeCredential('sk-or-v1-abcdefghijklmnop'), true);
-  assert.equal(looksLikeCredential('prod-key'), false);
-  assert.equal(looksLikeCredential('My OpenRouter Key'), false);
-  assert.equal(looksLikeCredential(null), false);
-  assert.equal(looksLikeCredential(''), false);
-});

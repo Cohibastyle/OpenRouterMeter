@@ -15,13 +15,16 @@ const CHART_HOUR_MS = 60 * CHART_MINUTE_MS;
 /**
  * Bin width per range. Chosen so each range has a readable number of bars and
  * so the bins never get finer than the granularity the collector retains:
- * minute rows for the two shortest ranges, hour rows for the three longer ones.
+ * minute rows for the two shortest ranges, hour rows for the three longer
+ * ones. A bin finer than an hour cannot represent hour-granularity data — the
+ * row cannot be split across bins — so the 3h and 6h ranges use hour bins;
+ * their recent bins still read the finer minute rows.
  */
 export const CHART_BIN_MS: Record<ChartScale, number> = {
   '10m': CHART_MINUTE_MS,
   '1h': 5 * CHART_MINUTE_MS,
-  '3h': 15 * CHART_MINUTE_MS,
-  '6h': 30 * CHART_MINUTE_MS,
+  '3h': CHART_HOUR_MS,
+  '6h': CHART_HOUR_MS,
   '24h': CHART_HOUR_MS,
 };
 
@@ -140,12 +143,16 @@ export function buildChart(request: ChartRequest): ChartData {
       // at minute, hour, and day granularity. The current partial bin therefore
       // reads minute rows when they cover it, while older bins keep hour rows —
       // which is also how the interval buttons are summed, so the totals match.
+      // A bin at the trailing edge of a granularity's recorded range still
+      // holds real rows, so overlap is enough — dropping them made a wider
+      // window total less than a narrower one.
       const choice = selectGranularity(
         request.requests,
         clip.start,
         clip.end,
         bin.end - bin.start,
         request.collectionRanges ?? [],
+        true,
       );
       const inBin = choice.rows.filter((r) => {
         const t = new Date(r.event_time).getTime();

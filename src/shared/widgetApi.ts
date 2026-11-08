@@ -85,7 +85,13 @@ export interface ChartParams {
 
 export interface BreakdownParams {
   groupBy: 'model' | 'key';
-  windowMs: number;
+  scale: ChartScale;
+  /**
+   * Instant the window ends at. The renderer passes the snapshot's own
+   * instant, so the table sums the same trailing window the interval buttons
+   * show; a fresh clock read here would slide the window between the two.
+   */
+  anchor: number;
   keyId: string | null;
 }
 

@@ -4,7 +4,165 @@ Keep a list of issues here and their status.
 
 ## Open Issues
 
-None.
+These rules should always be adhered to:
+1. Totals:  There are multiple totals:  Big number, Totals in the interval buttons,  These should always equal the totals for the dislayed graph bars.  This data should always be live and recent.
+2. Rolling: Big number Rolling up or down depends on the total value changes.  No rolling when change time interval buttons, the values should appear instantly.  Rolling shouls never overshoot and bounce.  Rolling speed ramps up and then ramps down.  Total Rolling Time should be about 2000ms
+3. A Chip for the delta should appear first, and then the rolling will start 100ms after.  
+4. The chart should be live and immediately show data as it comes in.  keeping the totals all true.  
+5. The code for implementing this should be reusable across Spend and Tokens and as much as possible on the Keys and Models tabs.  Rewrite the code to make it simple and easy to troubleshoot.  
+6. If possible, try to reduce the amount of typecript code and replace it with RUST. 
+
+### Compliance check (2026-11-08)
+
+Checked the app against all six rules; three violations found and fixed:
+
+1. **Rule 1 — totals could disagree.** The chart was anchored to a fresh
+   `Date.now()` at fetch time while the snapshot windows were computed at emit
+   time, so the trailing window slid between the two payloads and the bars
+   summed to a different figure than the range buttons. Worse, the headline
+   preferred the async chart payload over the snapshot cell, so the big number,
+   the buttons, and the delta chip could each read a different instant. The
+   chart is now anchored to the snapshot's own `server_time` (`snapshotNow()`),
+   and the headline always reads the snapshot window cell — the same payload
+   the buttons show. The windows are computed from the same bins the chart
+   draws, so all three totals are one figure by construction; a test now locks
+   that invariant for all five ranges (`tests/chart.test.ts`).
+2. **Rule 1 (Rust port) — the granularity gate diverged.** The Rust
+   `compute_windows` gated on a *quarter* of the window width while the
+   TypeScript spec gates on the window width itself, so an hourly source
+   answered the 1h window in the renderer but not in the port — the buttons
+   showed "–" while the chart drew bars. The gate now matches
+   `src/shared/windows.ts`, with a regression test.
+3. **Rule 2 — roll was shorter than specified.** `HEADLINE_ROLL_SHARE` was
+   0.18, so the default ten-second refresh rolled for 1.8 s and a five-second
+   refresh for only 900 ms. The share is now 0.4, so every refresh interval the
+   settings allow (5 s and up) gets the full ~2000 ms roll; only a hand-edited
+   interval below five seconds shortens it.
+
+Rules 3 (chip first, roll after 100 ms), 4 (chart re-fetched on every snapshot,
+live panning), 5 (shared headline/strip/chip machinery across Spend, Tokens,
+Keys, Models), and 6 (snapshot/windows/chart/breakdown already in Rust) were
+verified compliant. All 154 TypeScript tests, 44 Rust tests, typecheck, and
+the frontend build pass.
+
+### Keys tab interval buttons (2026-11-08, later)
+
+**The Keys tab ignored interval clicks.** `buildStrip`'s `onCellClick` only
+re-fetched the breakdown for the Models tab; the Keys tab fell into the
+chart-load branch, so clicking a range button left the table showing the
+previous interval's per-key tokens and spend. The Keys tab now reloads the
+breakdown exactly like Models, and both tabs also reload it on every snapshot
+so the rows stay live between clicks rather than only when the range changes.
+
+### Keys/Models tables disagreed with the interval buttons (2026-11-08, later)
+
+**The breakdown summed one granularity for the whole window; the buttons sum
+one granularity per bin.** With minute rows covering the last two hours and
+hour rows covering the day, the table used hour rows everywhere while the
+buttons used minute rows for the recent bins — so the table's total drifted
+from the button's total. The buttons are correct (they sum the same bins the
+chart draws, which is the invariant the headline also follows). Both
+`buildBreakdown` (TS) and `build_breakdown` (Rust) now select rows exactly the
+way the chart selects them: per bin, clipped to the trailing window, one
+granularity per bin. `granularity_ms` on the result is now always null because
+a table can mix granularities across bins. Regression tests in both languages
+assert the table's rows add up to the 24h button's spend and tokens.
+
+**The breakdown was also anchored to a fresh clock read.** Even with per-bin
+selection, the table was computed at the moment `breakdown()` was called while
+the buttons were computed at the snapshot's emit instant; with a snapshot a few
+minutes old, the table's trailing window ended later and counted rows the
+buttons did not (visible as the 3h table summing 18.83M against an 18.3M
+button). `BreakdownParams` now carries an `anchor`, the renderer passes the
+snapshot's `server_time` (`snapshotNow()`), and the Rust side windows the table
+at that instant — the same anchor the chart already uses.
+
+**The 6h window totalled less than 3h (non-monotonic windows).** Two causes.
+First, the per-bin coverage rule demanded coverage from the bin's start, so a
+bin straddling the minute range's trailing edge was dropped entirely even
+though it held real minute rows. `selectGranularity`/`select_granularity` now
+take an `overlapOk` mode for chart bins: a granularity qualifies when it has
+rows inside the bin, or when its recorded range fully covers the bin and no
+granularity has rows there (an empty bin is zero usage, but a coarser row
+proves the fine fetch missed data). Second and deeper: the 3h (15-min) and 6h
+(30-min) bins are finer than an hour row, and an hour row cannot be split
+across bins, so anything older than the two-hour minute range was
+*uncountable* at those scales — the 6h window had only ever summed the last
+two hours. The 3h and 6h ranges now use hour bins; their recent bins still
+read the finer minute rows. Verified against the live database:
+10m ≤ 1h ≤ 3h ≤ 6h ≤ 24h, with button = chart = table at every scale, and a
+regression test locks the monotonicity.
+
+**Keys/Models tables verified against the live database; orphaned TypeScript
+removed (2026-11-08, later).** A new Rust test
+(`the_live_database_is_consistent_across_every_scale`) reads the real
+widget.db and asserts the interval buttons equal both table totals at every
+scale and that the scales are monotonic — it passes, so the mismatches seen
+earlier were stale app instances running pre-fix binaries (nine old copies in
+/Applications share the same widget.db). With correctness locked in Rust, the
+Electron-era data layer was deleted as orphaned: `openrouter.ts`,
+`analytics.ts`, `sourceDate.ts`, `counterSpend.ts`, and `redact.ts` (1,112
+lines with their tests) — the app collects, parses, and redacts entirely in
+Rust (`collector.rs`, `logging.rs`). The computational core
+(`chart/windows/breakdown/granularity/money/snapshot/sample`) stays in
+TypeScript deliberately: it is the oracle the Rust crosscheck test validates
+the port against, and `chart.ts`/`breakdown.ts` supply the types the renderer
+imports.
+
+**Same anchor is not enough; the row set must also be the same.** Aggregate
+rows are overwritten in place as they accumulate (`ON CONFLICT(id) DO UPDATE`
+— an hour row grows until the hour closes), so a breakdown computed minutes
+after the snapshot read *larger* values for the same rows even at the same
+anchor — the table totalled ~5–10% more than every button (10m 3.85M vs
+3.117M, 1h 12M vs 11.27M, 3h 21.6M vs 20.86M). `AppState` now caches the row
+set of each recent snapshot (`snapshot_rows`, a short history keyed by
+instant), and `breakdown()`/`live_chart()` answer any call anchored to a known
+snapshot from that snapshot's own rows via `requests_for()`. Every figure the
+user sees — buttons, headline, bars, table — comes from one row set at one
+instant. The history (8 emits) covers a renderer anchored to a snapshot an
+emit or two old, which is exactly what happens when the refresh loop was
+paused while hidden and a manual action refreshed the cache in between — the
+case that kept producing mismatched tables.
+
+**Why the numbers kept diverging, and the storage answer.** The root cause is
+that aggregate rows mutate in place, so "the same rows" read at two times
+yield different totals.
+
+**Implemented: the append-only observation log (schema migration 5).** Every
+collection now appends one immutable row per bucket to `request_obs` instead of
+only overwriting `request` in place; the `request` table remains as the
+latest-per-bucket view, and `list_requests_as_of(as_of)` reads the latest
+observation per bucket at-or-before an instant — a deterministic query. The
+snapshot reads `requests_as_of(now)`, and the chart and Models/Keys tables read
+`requests_as_of(anchor)` at the snapshot's `server_time`, so every figure the
+user sees comes from one frozen view of the data with no cache convention to
+drift. Verified against the live database: the as-of read at a fixed instant
+returned identical totals across 12 seconds of incoming collections while the
+live view moved (775 buckets / 1.755B tokens both times), and the consistency
+test passed four times over ~50 seconds of streaming. The in-memory
+`snapshot_rows` cache was removed — the log makes it redundant.
+
+**Real-time chart.** The chart pans continuously (its x axis is a function of
+the clock, repainted per frame), re-fetches on every snapshot, and grows the
+current bar via `barGrowth` the moment new data lands. That is as real-time as
+the source allows: OpenRouter reports per-minute buckets and the collector
+fetches every `refresh_sec`.
+
+**Blank 10m chart after showing the window, and first-click table mismatch
+(2026-11-08, later).** Two symptoms of one staleness race. When the window was
+hidden, `pause_when_hidden` rebased the refresh timers on every tick, so
+showing the window again waited a full `refresh_sec` before the first refresh —
+the chart stayed anchored to a snapshot old enough that its bars had scrolled
+off the panned axis (the blank 10m chart). The loop now refreshes and
+invalidates the chart on the first tick after the window becomes visible.
+Separately, `loadBreakdown`/`loadChart` captured the snapshot anchor and then
+awaited the bridge; a newer snapshot landing mid-fetch left the table/chart
+summing a different instant than the buttons showed. Both now discard a
+response whose anchor, scale, or metric no longer matches the displayed state
+when the fetch returns.
+
+
+
 
 ## Closed Issues
 
@@ -251,3 +409,12 @@ None.
     bins `buildChart` draws. The selected interval, the headline, and the bar sum
     are one number. The five buttons overlap and are never summed together.
     `live_snapshot` / `live_chart` now pass collection ranges and honour `keyId`.
+
+24. **The first click on an unfocused window only activated it.**
+    macOS swallows the first click on an inactive window to activate it, so a
+    press on the drag region highlighted the widget and only the second press
+    moved it. The window now sets `acceptFirstMouse: true` in
+    `src-tauri/tauri.conf.json`, which makes the activation click also reach the
+    webview. A press on the status bar starts the drag on the first click, and a
+    press on a control acts on the first click too. Verified by launching the
+    rebuilt app and dragging from an unfocused state.

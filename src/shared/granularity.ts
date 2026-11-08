@@ -47,6 +47,14 @@ export interface CollectionRange {
  * granularity that only reaches back two hours cannot answer a 24-hour window
  * even though its rows fall inside it, because the earlier part of the window
  * would be silently missing.
+ *
+ * `overlapOk` relaxes "covers" for the chart's bins: a granularity qualifies
+ * when its recorded range covers the whole period (zero usage is real data),
+ * or when it overlaps the period *and* has at least one row inside it. A bin
+ * at the trailing edge of the minute range still holds real rows — dropping
+ * them made a wider window total less than a narrower one (6h < 3h). Requiring
+ * a row in the partial case stops an empty edge bin from claiming the period
+ * while a coarser row for the same span goes uncounted.
  */
 export function selectGranularity<T extends { event_time: string; source: string }>(
   rows: ReadonlyArray<T>,
@@ -54,6 +62,7 @@ export function selectGranularity<T extends { event_time: string; source: string
   end: number,
   maxGranularityMs = Number.POSITIVE_INFINITY,
   ranges: ReadonlyArray<CollectionRange> = [],
+  overlapOk = false,
 ): GranularityChoice<T> {
   const byGranularity = new Map<number, T[]>();
   // Rows whose source names no granularity (sample data, fixtures, a future
@@ -90,7 +99,28 @@ export function selectGranularity<T extends { event_time: string; source: string
     // than missing data.
     const recorded = rangeFor(g);
     if (recorded) {
-      if (recorded.start <= start + g && recorded.end >= end - 2 * g) {
+      const full = recorded.start <= start + g && recorded.end >= end - 2 * g;
+      if (!overlapOk) {
+        if (full) {
+          return { granularityMs: g, rows: bucket };
+        }
+        continue;
+      }
+      // Overlap mode (chart bins): real rows always win. A granularity with
+      // rows inside the period qualifies; full recorded coverage with no rows
+      // inside qualifies only when no granularity has rows there — an empty
+      // bin is zero usage, but a coarser row proves the fine fetch missed data
+      // and must not be shadowed by it.
+      const hasRowsInside = (rs: ReadonlyArray<T>) =>
+        rs.some((row) => {
+          const t = new Date(row.event_time).getTime();
+          return !Number.isNaN(t) && t >= start && t < end;
+        });
+      if (hasRowsInside(bucket)) {
+        return { granularityMs: g, rows: bucket };
+      }
+      const anyRowsInside = [...byGranularity.values()].some(hasRowsInside);
+      if (full && !anyRowsInside) {
         return { granularityMs: g, rows: bucket };
       }
       continue;
@@ -104,7 +134,10 @@ export function selectGranularity<T extends { event_time: string; source: string
       if (t < earliest) earliest = t;
       if (t > latest) latest = t;
     }
-    if (earliest <= start + g && latest >= end - 2 * g) {
+    const covers = overlapOk
+      ? earliest < end && latest >= start
+      : earliest <= start + g && latest >= end - 2 * g;
+    if (covers) {
       return { granularityMs: g, rows: bucket };
     }
   }

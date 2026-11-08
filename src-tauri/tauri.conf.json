@@ -24,7 +24,8 @@
         "fullscreen": false,
         "skipTaskbar": true,
         "visible": false,
-        "alwaysOnTop": true
+        "alwaysOnTop": true,
+        "acceptFirstMouse": true
       }
     ],
     "security": {

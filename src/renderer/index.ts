@@ -52,11 +52,11 @@ const HEADLINE_ANIM_MS = 2000;
  *
  * The roll must finish before the next refresh arrives, or a counter that
  * arrives at its target exactly as the next change lands would look like it
- * never settled. A short interval therefore gets a shorter roll: at the default
- * ten-second refresh the roll takes 1.8 s, and a deliberately brisk one-second
- * interval still gets 180 ms.
+ * never settled. The share is sized so the roll runs for the full two seconds
+ * the animation was tuned for at every refresh interval the settings allow
+ * (5 s and up), and only a hand-edited interval below five seconds shortens it.
  */
-const HEADLINE_ROLL_SHARE = 0.18;
+const HEADLINE_ROLL_SHARE = 0.4;
 /**
  * Shares of the refresh interval used to size the chip's life.
  *
@@ -73,6 +73,8 @@ const INCREASE_TTL_MIN_MS = 5000;
 const INCREASE_TTL_MAX_MS = 20000;
 /** How long a fresh increase holds its inverse (filled) look. */
 const INCREASE_FLASH_MS = 900;
+/** Delay between chip appearance and the digit roll starting. */
+const ROLL_AFTER_CHIP_MS = 100;
 /** How long the chip takes to fade once its time is up. */
 const INCREASE_FADE_MS = 400;
 /** Space between a stacked headline and the chip under it; matches app.css. */
@@ -110,6 +112,7 @@ interface Delta {
 interface Roll {
   from: number;
   to: number;
+  /** When the roll animation itself starts. Can be in the future while waiting. */
   startedAt: number;
   durationMs: number;
 }
@@ -550,7 +553,13 @@ function handleSnapshot(next: Snapshot): void {
   trackDelta(next);
   state.snapshot = next;
 
-  if (state.tab === 'requests') void loadBreakdown();
+  // The Models and Keys tables are built from the selected interval, so they
+  // must follow every snapshot the way the headline and chart do — otherwise
+  // the rows keep showing the previous refresh's figures until the user clicks
+  // a range button.
+  if (state.tab === 'requests' || state.tab === 'models' || state.tab === 'api') {
+    void loadBreakdown();
+  }
   if (state.tab === 'api') void loadKeys();
   // The chart follows the clock, so it is re-fetched on every snapshot rather
   // than only on the slower chart timer. That is what makes the last bar grow
@@ -617,9 +626,9 @@ function recordDelta(
  *
  * A roll has to finish before the next change lands, or a number that reaches its
  * target exactly as the following refresh arrives looks like it never settled.
- * The default ten-second refresh therefore gets a 1.8 s roll; a deliberately
- * brisk one-second interval still gets 180 ms, and a slow one is capped at the
- * two seconds the animation was tuned for instead of rolling for a minute.
+ * Every refresh interval the settings allow (5 s and up) therefore gets the full
+ * two-second roll; only a hand-edited interval below five seconds shortens it,
+ * and a slow one is capped at two seconds instead of rolling for a minute.
  */
 function headlineRollMs(): number {
   const refreshSec = state.settings?.parameters.refresh_sec ?? 10;
@@ -663,15 +672,24 @@ function expireDelta(metric: Metric, at: number, chip: HTMLElement): void {
 
 async function loadBreakdown(): Promise<void> {
   const keyId = state.settings?.view.scope.kind === 'key' ? state.settings.view.scope.id : null;
-  const windowMs = CHART_RANGE_MS[state.chartScale];
+  // Anchored to the snapshot's own instant, so the table sums the same
+  // trailing window the interval buttons show. A fresh clock read here would
+  // slide the window between the snapshot and this call, and the table would
+  // count rows the buttons do not.
+  const anchor = snapshotNow();
+  const scale = state.chartScale;
   // The Keys tab is the same table grouped the other way, for the same
   // interval, so both are fetched together and stay in step.
   const [byModel, byKey] = await Promise.all([
-    api.requests.breakdown({ groupBy: 'model', windowMs, keyId }),
+    api.requests.breakdown({ groupBy: 'model', scale, anchor, keyId }),
     // A key-scoped view must still list every key, otherwise the table would
     // collapse to the one key already selected.
-    api.requests.breakdown({ groupBy: 'key', windowMs, keyId: null }),
+    api.requests.breakdown({ groupBy: 'key', scale, anchor, keyId: null }),
   ]);
+  // A newer snapshot or a range change during the fetch made this response
+  // stale: the buttons now show a different instant or interval than it sums.
+  // Drop it; the snapshot handler or the click already issued a replacement.
+  if (snapshotNow() !== anchor || state.chartScale !== scale) return;
   state.breakdown = byModel;
   state.breakdownByKey = byKey;
 }
@@ -688,15 +706,34 @@ async function loadChart(): Promise<void> {
   const keyId = state.settings?.view.scope.kind === 'key' ? state.settings.view.scope.id : null;
   // While the chart is not pinned it follows the clock, so the window slides
   // across the x axis on every refresh instead of freezing at the instant the
-  // view opened.
-  if (!state.chartPinned) state.chartAnchor = Date.now();
-  state.chartData = await api.charts.get({
-    metric: state.chartMetric,
-    scale: state.chartScale,
-    anchor: state.chartAnchor,
-    keyId,
-  });
+  // view opened. It is anchored to the snapshot's own instant rather than to a
+  // fresh clock read: the snapshot windows, the range buttons, and the headline
+  // are all computed at that same instant, so the bars they sum cannot drift
+  // from the figures beside them. A separate Date.now() here slid the trailing
+  // window between the two payloads and the totals disagreed.
+  if (!state.chartPinned) state.chartAnchor = snapshotNow();
+  const anchor = state.chartAnchor;
+  const metric = state.chartMetric;
+  const scale = state.chartScale;
+  const data = await api.charts.get({ metric, scale, anchor, keyId });
+  // A newer snapshot, a range change, or a repin during the fetch made this
+  // response stale; the triggering path already issued a replacement.
+  if (state.chartAnchor !== anchor || state.chartMetric !== metric || state.chartScale !== scale) {
+    return;
+  }
+  state.chartData = data;
   chartRenderer?.setData(state.chartData);
+}
+
+/**
+ * The instant the current snapshot was computed at, or the clock when there is
+ * no snapshot yet. Everything the user reads — range buttons, headline, chart
+ * totals — is anchored to this one instant so the figures always agree.
+ */
+function snapshotNow(): number {
+  const serverTime = state.snapshot?.server_time;
+  const parsed = serverTime ? Date.parse(serverTime) : NaN;
+  return Number.isFinite(parsed) ? parsed : Date.now();
 }
 
 function matchesLogQuery(entry: LogEntry, query: LogQuery): boolean {
@@ -931,7 +968,10 @@ function buildStrip(metric: Metric): SummaryStrip {
       // than opening a separate chart view.
       state.chartMetric = metric;
       selectInterval(cell.key);
-      if (state.tab === 'models') {
+      if (state.tab === 'models' || state.tab === 'api') {
+        // The Models and Keys tables are built from the selected interval, so
+        // the breakdown must be re-fetched for the new range — a chart load
+        // would leave the table showing the previous interval's figures.
         void loadBreakdown().then(() => render());
       } else {
         void loadChart().then(() => render());
@@ -954,7 +994,7 @@ function buildStrip(metric: Metric): SummaryStrip {
 function selectInterval(key: ChartScale): void {
   if (state.chartScale === key) return;
   state.chartScale = key;
-  state.chartAnchor = Date.now();
+  state.chartAnchor = snapshotNow();
   state.chartPinned = false;
   state.displayed.spend = null;
   state.displayed.tokens = null;
@@ -997,8 +1037,10 @@ function renderInlineChart(metric: Metric): HTMLElement {
 
   // The inline chart follows the clock too, so it slides with the tab rather
   // than freezing at the instant the tab was first drawn. A pinned chart is the
-  // exception: the user moved it to a past period on purpose.
-  if (!state.chartPinned) state.chartAnchor = Date.now();
+  // exception: the user moved it to a past period on purpose. The anchor is the
+  // snapshot's instant, so the bars sum to the same figure the range buttons
+  // and the headline show.
+  if (!state.chartPinned) state.chartAnchor = snapshotNow();
   mountChart(chartWrap, metric);
   return wrap;
 }
@@ -1099,6 +1141,10 @@ function selectedInterval(snapshot: Snapshot): {
   counter: Snapshot['counter_today'] | null;
 } {
   const cell = snapshot.windows.find((w) => w.key === state.chartScale) ?? null;
+  // The headline reads the snapshot's window cell — the same payload the range
+  // buttons show. The chart sums to the same figure because the windows are
+  // computed from the same bins the chart draws, and the chart is anchored to
+  // the snapshot's own instant, so the three totals cannot drift apart.
   const spend = cell?.spend_micro ?? null;
   const tokens = cell?.total_tokens ?? null;
 
@@ -1253,12 +1299,19 @@ function paintHeadline(
   // A roll still in flight owns the element. Resuming it is what makes the
   // animation look the same on every refresh: the digits carry on from where
   // they had reached instead of restarting from the previous total.
-  if (roll && roll.to === target && now - roll.startedAt < roll.durationMs) {
-    const elapsed = now - roll.startedAt;
-    animateHeadline(value, roll.from, roll.to, format, roll.durationMs - elapsed, () => {
-      if (state.rolls[metric] === roll) state.rolls[metric] = null;
-    });
-    return;
+  if (roll && roll.to === target) {
+    if (now < roll.startedAt) {
+      value.textContent = format(roll.from);
+      window.setTimeout(() => render(), roll.startedAt - now);
+      return;
+    }
+    if (now - roll.startedAt < roll.durationMs) {
+      const elapsed = now - roll.startedAt;
+      animateHeadline(value, roll.from, roll.to, format, roll.durationMs - elapsed, () => {
+        if (state.rolls[metric] === roll) state.rolls[metric] = null;
+      });
+      return;
+    }
   }
 
   if (previous === null || previous === target) {
@@ -1271,12 +1324,12 @@ function paintHeadline(
   // alter the string is shown but not animated. `format` above keeps three
   // decimals on spend for exactly this reason.
   const durationMs = headlineRollMs();
-  const next: Roll = { from: previous, to: target, startedAt: now, durationMs };
+  const rollStartAt = now + ROLL_AFTER_CHIP_MS;
+  const next: Roll = { from: previous, to: target, startedAt: rollStartAt, durationMs };
   state.rolls[metric] = next;
-  animateHeadline(value, previous, target, format, durationMs, () => {
-    // Only clear the marker if no newer roll has taken over in the meantime.
-    if (state.rolls[metric] === next) state.rolls[metric] = null;
-  });
+  value.textContent = format(previous);
+  // The chip appears first; the roll begins on the delayed repaint.
+  window.setTimeout(() => render(), ROLL_AFTER_CHIP_MS);
 }
 
 /**

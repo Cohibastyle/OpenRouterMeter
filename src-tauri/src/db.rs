@@ -93,6 +93,38 @@ const MIGRATIONS: &[(i64, &str)] = &[
         ALTER TABLE request ADD COLUMN request_count INTEGER;
         "#,
     ),
+    (
+        5,
+        r#"
+        -- Append-only observation log. Aggregate buckets were previously
+        -- overwritten in place as they accumulated, so "the same rows" read at
+        -- two times yielded different totals — the interval buttons and the
+        -- tables could never agree. Every collection now appends one immutable
+        -- observation per bucket; reading the latest observation per bucket
+        -- at-or-before an instant is a deterministic query.
+        CREATE TABLE IF NOT EXISTS request_obs (
+          obs_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+          id TEXT NOT NULL, event_time TEXT NOT NULL, received_time TEXT NOT NULL,
+          key_id TEXT, key_name TEXT, model TEXT, status TEXT,
+          input_tokens INTEGER, output_tokens INTEGER, total_tokens INTEGER,
+          cost_micro INTEGER, request_count INTEGER, source TEXT NOT NULL,
+          observed_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_request_obs_id ON request_obs(id, obs_seq DESC);
+        CREATE INDEX IF NOT EXISTS idx_request_obs_event ON request_obs(event_time);
+        -- Backfill: each existing row becomes its own latest observation.
+        INSERT INTO request_obs (
+          id, event_time, received_time, key_id, key_name, model, status,
+          input_tokens, output_tokens, total_tokens, cost_micro, request_count,
+          source, observed_at
+        )
+        SELECT
+          id, event_time, received_time, key_id, key_name, model, status,
+          input_tokens, output_tokens, total_tokens, cost_micro, request_count,
+          source, updated_at
+        FROM request;
+        "#,
+    ),
 ];
 
 pub struct Db {
@@ -162,11 +194,17 @@ impl Db {
     }
 
     /// Insert request rows in one transaction. Returns the number written.
+    ///
+    /// Every row is appended to the observation log as an immutable record of
+    /// what the source reported at this collection. The `request` table stays
+    /// as the latest-per-bucket view for callers that only ever want the
+    /// current figure; anything that needs a consistent read at an instant
+    /// uses `list_requests_as_of` against the log.
     pub fn insert_requests(&mut self, rows: &[Value]) -> rusqlite::Result<usize> {
         let tx = self.conn.transaction()?;
         let mut written = 0;
         {
-            let mut stmt = tx.prepare(
+            let mut latest = tx.prepare(
                 "INSERT INTO request (
                    id, event_time, received_time, key_id, key_name, model, status,
                    input_tokens, output_tokens, total_tokens, cost_micro, request_count,
@@ -187,8 +225,16 @@ impl Db {
                    source = excluded.source,
                    updated_at = excluded.updated_at",
             )?;
+            let mut obs = tx.prepare(
+                "INSERT INTO request_obs (
+                   id, event_time, received_time, key_id, key_name, model, status,
+                   input_tokens, output_tokens, total_tokens, cost_micro, request_count,
+                   source, observed_at
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )?;
             for row in rows {
-                stmt.execute(params![
+                let observed_at = row["received_time"].as_str();
+                latest.execute(params![
                     row["id"].as_str(),
                     row["event_time"].as_str(),
                     row["received_time"].as_str(),
@@ -202,7 +248,23 @@ impl Db {
                     row["cost_micro"].as_i64(),
                     row["request_count"].as_i64(),
                     row["source"].as_str().unwrap_or("sample"),
+                    observed_at,
+                ])?;
+                obs.execute(params![
+                    row["id"].as_str(),
+                    row["event_time"].as_str(),
                     row["received_time"].as_str(),
+                    row["key_id"].as_str(),
+                    row["key_name"].as_str(),
+                    row["model"].as_str(),
+                    row["status"].as_str(),
+                    row["input_tokens"].as_i64(),
+                    row["output_tokens"].as_i64(),
+                    row["total_tokens"].as_i64(),
+                    row["cost_micro"].as_i64(),
+                    row["request_count"].as_i64(),
+                    row["source"].as_str().unwrap_or("sample"),
+                    observed_at,
                 ])?;
                 written += 1;
             }
@@ -264,6 +326,65 @@ impl Db {
         };
         if let Ok(rows) = result {
             out = rows;
+        }
+        out
+    }
+
+    /**
+     * The latest observation of every bucket at-or-before `as_of_ms`.
+     *
+     * This is the deterministic read the observation log exists for: the data
+     * as of an instant, unaffected by collections that arrived after it. The
+     * interval buttons, the chart, and the Models/Keys tables all read through
+     * here at the snapshot's instant, so every figure comes from one frozen
+     * view of the data.
+     */
+    pub fn list_requests_as_of(&self, as_of_ms: i64, key_id: Option<&str>) -> Vec<Value> {
+        // The latest observation per bucket is the one with the greatest
+        // obs_seq whose observed_at is at-or-before the instant. obs_seq is
+        // monotonic with insertion, so it breaks same-millisecond ties in
+        // insertion order.
+        let sql = "
+            SELECT o.id, o.event_time, o.received_time, o.key_id, o.key_name,
+                   o.model, o.status, o.input_tokens, o.output_tokens,
+                   o.total_tokens, o.cost_micro, o.request_count, o.source
+            FROM request_obs o
+            JOIN (
+              SELECT id, MAX(obs_seq) AS max_seq
+              FROM request_obs
+              WHERE observed_at <= ?1
+              GROUP BY id
+            ) latest ON latest.id = o.id AND latest.max_seq = o.obs_seq
+            ORDER BY o.event_time DESC";
+
+        let as_of = crate::accounting::format_time(as_of_ms);
+        let mut stmt = match self.conn.prepare(sql) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = stmt.query_map(params![as_of], |r| {
+            Ok(json!({
+                "id": r.get::<_, String>(0)?,
+                "event_time": r.get::<_, String>(1)?,
+                "received_time": r.get::<_, String>(2)?,
+                "key_id": r.get::<_, Option<String>>(3)?,
+                "key_name": r.get::<_, Option<String>>(4)?,
+                "model": r.get::<_, Option<String>>(5)?,
+                "status": r.get::<_, Option<String>>(6)?,
+                "input_tokens": r.get::<_, Option<i64>>(7)?,
+                "output_tokens": r.get::<_, Option<i64>>(8)?,
+                "total_tokens": r.get::<_, Option<i64>>(9)?,
+                "cost_micro": r.get::<_, Option<i64>>(10)?,
+                "request_count": r.get::<_, Option<i64>>(11)?,
+                "source": r.get::<_, String>(12)?,
+            }))
+        });
+        let mut out: Vec<Value> = match rows {
+            Ok(r) => r.filter_map(|v| v.ok()).collect(),
+            Err(_) => return Vec::new(),
+        };
+        if let Some(id) = key_id {
+            out.retain(|r| r["key_id"].as_str() == Some(id));
         }
         out
     }

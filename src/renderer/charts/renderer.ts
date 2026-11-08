@@ -56,6 +56,8 @@ const VALUE_TICK_MIN_GAP = 26;
  * The gutter grows past this when a label needs the room.
  */
 const VALUE_AXIS_MIN_PAD_LEFT = 26;
+/** Minimum overlay height so a live increment is visibly distinct. */
+const GROWTH_MIN_VISIBLE_PX = 2;
 
 const COLORS = {
   spend: '#34d399',
@@ -308,6 +310,9 @@ export class ChartRenderer {
     this.render();
     // The plot slid, so the bucket under a motionless pointer is a different one.
     this.refreshHover();
+    // Even when the hovered bin does not change, age/partial context evolves
+    // while the axis pans, so the tooltip content must be refreshed.
+    this.refreshTooltipWhilePanning();
   };
 
   private render(): void {
@@ -443,7 +448,12 @@ export class ChartRenderer {
             ctx.fillRect(xStart, barTop + barHeight - baseH, w, baseH);
           }
           ctx.fillStyle = COLORS.growth;
-          ctx.fillRect(xStart, barTop + barHeight - h, w, Math.max(1, h - baseH));
+          const growthH = h - baseH;
+          const overlayH = growthH > 0 ? Math.max(GROWTH_MIN_VISIBLE_PX, growthH) : 0;
+          if (overlayH > 0) {
+            const overlayTop = barTop + barHeight - baseH - overlayH;
+            ctx.fillRect(xStart, overlayTop, w, overlayH);
+          }
         } else {
           ctx.fillStyle = COLORS.spend;
           ctx.fillRect(xStart, barTop + barHeight - h, w, h);
@@ -459,8 +469,13 @@ export class ChartRenderer {
         ctx.fillRect(xStart, barTop + barHeight - inputH - outputH, w, outputH);
         if (frame && !frame.solid) {
           const baseH = (base / maxValue) * barHeight;
-          ctx.fillStyle = COLORS.growth;
-          ctx.fillRect(xStart, barTop + barHeight - totalH, w, Math.max(1, totalH - baseH));
+          const growthH = totalH - baseH;
+          const overlayH = growthH > 0 ? Math.max(GROWTH_MIN_VISIBLE_PX, growthH) : 0;
+          if (overlayH > 0) {
+            const overlayTop = barTop + barHeight - baseH - overlayH;
+            ctx.fillStyle = COLORS.growth;
+            ctx.fillRect(xStart, overlayTop, w, overlayH);
+          }
         }
       }
     }
@@ -684,6 +699,15 @@ export class ChartRenderer {
     const index = hitTest(this.axis, this.bins, x, Math.max(1, this.plotWidth), 8);
     if (index === this.hoverIndex) return;
     this.hoverIndex = index;
+    this.updateTooltip();
+    this.positionTooltip(this.pointer);
+  }
+
+  /**
+   * Keep hovered values current while the axis moves under a still pointer.
+   */
+  private refreshTooltipWhilePanning(): void {
+    if (!this.pointer || !this.options.live || this.hoverIndex < 0) return;
     this.updateTooltip();
     this.positionTooltip(this.pointer);
   }

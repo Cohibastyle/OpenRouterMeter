@@ -73,8 +73,18 @@ test('columns cascade least significant first, one beat apart', () => {
   }
 });
 
-test('a fall is not rolled, and neither is a shape change', () => {
-  assert.equal(planRoll('$6.456', '$4.123', WINDOW), null);
+test('a fall rolls down, and a shape change does not roll', () => {
+  const fall = planRoll('$6.456', '$4.123', WINDOW);
+  assert.ok(fall);
+  assert.deepEqual(
+    fall.columns.map((c) => [c.index, c.from, c.to, c.steps]),
+    [
+      [5, 6, 3, -3],
+      [4, 5, 2, -3],
+      [3, 4, 1, -3],
+      [1, 6, 4, -2],
+    ],
+  );
   assert.equal(planRoll('$4.123', '$4.123', WINDOW), null);
   assert.equal(planRoll('$148.2K', '$1.24M', WINDOW), null);
   assert.equal(planRoll('$4.123', '$6.456', 0), null);
@@ -106,8 +116,7 @@ test('a strip parks on its starting digit before the roll begins', () => {
   const plan = planRoll('$4.888', '$5.222', WINDOW);
   assert.ok(plan);
   for (const column of plan.columns) {
-    assert.ok(column.steps >= 0 && column.steps <= 9);
-    assert.ok(column.from + column.steps <= 20, `${column.from}+${column.steps}`);
+    assert.ok(Math.abs(column.steps) <= 9);
   }
 });
 

@@ -61,6 +61,7 @@ pub fn build_chart(req: &ChartRequest<'_>) -> Value {
             hi,
             bin_end - bin_start,
             req.collection_ranges,
+            true,
         );
         let in_bin: Vec<&Value> = choice
             .rows
@@ -120,9 +121,14 @@ mod tests {
     fn bin_widths_match_the_typescript_table() {
         assert_eq!(crate::accounting::chart_bin_ms("10m"), crate::accounting::MINUTE);
         assert_eq!(crate::accounting::chart_bin_ms("1h"), 5 * crate::accounting::MINUTE);
-        assert_eq!(crate::accounting::chart_bin_ms("3h"), 15 * crate::accounting::MINUTE);
-        assert_eq!(crate::accounting::chart_bin_ms("6h"), 30 * crate::accounting::MINUTE);
+        assert_eq!(crate::accounting::chart_bin_ms("3h"), crate::accounting::HOUR);
+        assert_eq!(crate::accounting::chart_bin_ms("6h"), crate::accounting::HOUR);
         assert_eq!(crate::accounting::chart_bin_ms("24h"), crate::accounting::HOUR);
+        assert_eq!(crate::accounting::chart_range_ms("10m"), 10 * crate::accounting::MINUTE);
+        assert_eq!(crate::accounting::chart_range_ms("1h"), crate::accounting::HOUR);
+        assert_eq!(crate::accounting::chart_range_ms("3h"), 3 * crate::accounting::HOUR);
+        assert_eq!(crate::accounting::chart_range_ms("6h"), 6 * crate::accounting::HOUR);
+        assert_eq!(crate::accounting::chart_range_ms("24h"), crate::accounting::DAY);
     }
 
     #[test]

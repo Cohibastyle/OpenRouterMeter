@@ -22,13 +22,14 @@ pub const WINDOWS: &[(&str, i64)] = &[
     ("24h", DAY),
 ];
 
-/// Bin width per chart/window range. Must match src/shared/chart.ts.
+/// Bin width per chart/window range. Must match src/shared/chart.ts. A bin
+/// finer than an hour cannot represent hour-granularity data — the row cannot
+/// be split across bins — so the 3h and 6h ranges use hour bins; their recent
+/// bins still read the finer minute rows.
 pub fn chart_bin_ms(scale: &str) -> i64 {
     match scale {
         "10m" => MINUTE,
         "1h" => 5 * MINUTE,
-        "3h" => 15 * MINUTE,
-        "6h" => 30 * MINUTE,
         _ => HOUR,
     }
 }
@@ -179,12 +180,20 @@ pub struct GranularityChoice {
 
 /// Pick the finest granularity that covers `[start, end)` and is no coarser than
 /// `max_granularity_ms`. Mirrors selectGranularity in shared/granularity.ts.
+///
+/// `overlap_ok` relaxes "covers" to "overlaps": the recorded range only has to
+/// touch the period. The chart's bins use this, because a bin at the trailing
+/// edge of the minute range still holds real rows — dropping them made a wider
+/// window total less than a narrower one (6h < 3h). The half-open row filter
+/// clips rows to the bin, so rows outside the recorded range are never
+/// invented; the uncovered part of the bin simply has no rows.
 pub fn select_granularity(
     rows: &[Value],
     start: i64,
     end: i64,
     max_granularity_ms: i64,
     ranges: &[(i64, i64, i64)],
+    overlap_ok: bool,
 ) -> GranularityChoice {
     use std::collections::BTreeMap;
 
@@ -211,7 +220,32 @@ pub fn select_granularity(
         // Prefer the recorded fetch range: rows alone cannot prove coverage,
         // because an hour with no activity produces no row.
         if let Some((_, range_start, range_end)) = ranges.iter().find(|(rg, _, _)| *rg == g) {
-            if *range_start <= start + g && *range_end >= end - 2 * g {
+            let full = *range_start <= start + g && *range_end >= end - 2 * g;
+            if !overlap_ok {
+                if full {
+                    return GranularityChoice { granularity_ms: Some(g), rows: bucket };
+                }
+                continue;
+            }
+            // Overlap mode (chart bins): real rows always win. A granularity
+            // with rows inside the period qualifies; full recorded coverage
+            // with no rows inside qualifies only when no granularity has rows
+            // there — an empty bin is zero usage, but a coarser row proves the
+            // fine fetch missed data and must not be shadowed by it.
+            let has_rows_inside = |rs: &[Value]| {
+                rs.iter().any(|row| {
+                    row["event_time"]
+                        .as_str()
+                        .and_then(parse_time)
+                        .map(|t| t >= start && t < end)
+                        .unwrap_or(false)
+                })
+            };
+            if has_rows_inside(&bucket) {
+                return GranularityChoice { granularity_ms: Some(g), rows: bucket };
+            }
+            let any_rows_inside = by_granularity.values().any(|rs| has_rows_inside(rs));
+            if full && !any_rows_inside {
                 return GranularityChoice { granularity_ms: Some(g), rows: bucket };
             }
             continue;
@@ -225,7 +259,12 @@ pub fn select_granularity(
                 latest = latest.max(t);
             }
         }
-        if earliest <= start + g && latest >= end - 2 * g {
+        let covers = if overlap_ok {
+            earliest < end && latest >= start
+        } else {
+            earliest <= start + g && latest >= end - 2 * g
+        };
+        if covers {
             return GranularityChoice { granularity_ms: Some(g), rows: bucket };
         }
     }
@@ -248,7 +287,8 @@ pub struct WindowInputs<'a> {
 
 /// Compute the five trailing windows. Windows are trailing and overlapping and
 /// are never summed. A window is computable only when the finest source
-/// granularity is at most a quarter of the window width.
+/// granularity is no coarser than the window itself; a coarser source simply
+/// produces missing bins in the chart, which the window then sums as partial.
 pub fn compute_windows(inputs: &WindowInputs<'_>) -> Vec<Value> {
     let as_of = format_time(inputs.now);
 
@@ -272,7 +312,12 @@ pub fn compute_windows(inputs: &WindowInputs<'_>) -> Vec<Value> {
                 "as_of": as_of,
             });
 
-            if inputs.source_granularity_ms > ms / 4 {
+            // The gate must match src/shared/windows.ts exactly: a source no
+            // finer than the window cannot answer it. The port briefly used a
+            // quarter of the window here, which marked windows unavailable that
+            // the renderer computed — the range buttons showed "–" while the
+            // chart drew bars, and the totals disagreed.
+            if inputs.source_granularity_ms > *ms {
                 cell["partial_reason"] = json!("source_granularity");
                 return cell;
             }
@@ -301,6 +346,7 @@ pub fn compute_windows(inputs: &WindowInputs<'_>) -> Vec<Value> {
                     hi,
                     bin_end - bin_start,
                     inputs.collection_ranges,
+                    true,
                 );
                 let in_bin: Vec<&Value> = choice
                     .rows
@@ -372,7 +418,9 @@ pub fn period_totals(
     now: i64,
 ) -> Value {
     let effective_end = end.min(now);
-    let choice = select_granularity(requests, start, effective_end, i64::MAX, ranges);
+    // A whole-period query: the granularity must cover the period, not merely
+    // overlap it, or the earlier part would be silently missing.
+    let choice = select_granularity(requests, start, effective_end, i64::MAX, ranges, false);
     let source: Vec<Value> = if choice.granularity_ms.is_none() {
         requests.to_vec()
     } else {
@@ -413,27 +461,25 @@ pub fn period_totals(
 ///
 /// Mirrors `buildBreakdown` in src/shared/breakdown.ts. The public API exposes
 /// aggregates rather than individual generations, so this groups the same
-/// buckets the charts use. One granularity only, for the same reason the windows
-/// use one: the collector stores the same spend at minute, hour, and day
-/// granularity over overlapping ranges.
+/// buckets the charts use.
+///
+/// The rows are selected exactly the way the chart selects them: one
+/// granularity per bin, clipped to the trailing window. A single granularity
+/// for the whole window dropped the current partial bin's minute rows whenever
+/// hour rows also covered the range, so the table's total drifted from the
+/// interval buttons — which sum the same bins the chart draws.
 pub fn build_breakdown(
     requests: &[Value],
-    start: i64,
-    end: i64,
+    scale: &str,
+    anchor: i64,
+    now: i64,
     group_by: &str,
     ranges: &[(i64, i64, i64)],
 ) -> Value {
     use std::collections::BTreeMap;
 
-    let choice = select_granularity(requests, start, end, i64::MAX, ranges);
-    let Some(granularity_ms) = choice.granularity_ms else {
-        return json!({
-            "group_by": group_by,
-            "rows": [],
-            "granularity_ms": Value::Null,
-            "incomplete": true,
-        });
-    };
+    let (period_start, period_end, bins) = trailing_window_bins(scale, anchor);
+    let axis_end = period_end.min(now);
 
     // The group key and its display label. A key row prefers the display name
     // and falls back to the id, which is a hash and not secret material.
@@ -457,13 +503,49 @@ pub fn build_breakdown(
     };
 
     let mut groups: BTreeMap<String, (String, Vec<&Value>)> = BTreeMap::new();
-    for row in &choice.rows {
-        let Some(t) = row["event_time"].as_str().and_then(parse_time) else { continue };
-        if t < start || t >= end {
+    let mut any_bin = false;
+
+    for (bin_start, bin_end) in bins {
+        if bin_start >= axis_end {
             continue;
         }
-        let (id, label) = group_of(row);
-        groups.entry(id).or_insert_with(|| (label, Vec::new())).1.push(row);
+        let Some((lo, hi)) = clipped_bin_interval(bin_start, bin_end, period_start, axis_end) else {
+            continue;
+        };
+        // One granularity per bin — the same choice build_chart makes for the
+        // same bin, so the table and the bars cannot disagree. The rows are
+        // then taken from `requests` directly rather than from the choice's
+        // owned copy, so the groups can borrow them.
+        let choice = select_granularity(requests, lo, hi, bin_end - bin_start, ranges, true);
+        let Some(g) = choice.granularity_ms else { continue };
+        for row in requests {
+            let source = row["source"].as_str().unwrap_or("");
+            let matches = match granularity_of_source(source) {
+                Some(row_g) => row_g == g,
+                // A source that names no granularity is only used when no known
+                // granularity covers the bin, which is what Some(0) reports.
+                None => g == 0,
+            };
+            if !matches {
+                continue;
+            }
+            let Some(t) = row["event_time"].as_str().and_then(parse_time) else { continue };
+            if !in_half_open_range(t, lo, hi) {
+                continue;
+            }
+            any_bin = true;
+            let (id, label) = group_of(row);
+            groups.entry(id).or_insert_with(|| (label, Vec::new())).1.push(row);
+        }
+    }
+
+    if !any_bin && groups.is_empty() {
+        return json!({
+            "group_by": group_by,
+            "rows": [],
+            "granularity_ms": Value::Null,
+            "incomplete": true,
+        });
     }
 
     let mut rows: Vec<Value> = groups
@@ -502,7 +584,9 @@ pub fn build_breakdown(
     json!({
         "group_by": group_by,
         "rows": rows,
-        "granularity_ms": granularity_ms,
+        // Bins can mix granularities (minute rows for the current partial bin,
+        // hour rows for older ones), so no single granularity names the table.
+        "granularity_ms": Value::Null,
         "incomplete": false,
     })
 }
@@ -545,6 +629,35 @@ mod tests {
         let cells = compute_windows(&inputs);
         assert_eq!(cells[0]["coverage"], "unavailable");
         assert_eq!(cells[0]["partial_reason"], "source_granularity");
+    }
+
+    #[test]
+    fn the_granularity_gate_matches_the_typescript_spec() {
+        // The gate is "no coarser than the window", matching
+        // src/shared/windows.ts. An hourly source answers the 1h window and a
+        // daily source answers the 24h window; the quarter-window rule the port
+        // briefly used gates both out and the totals disagree with the chart.
+        let base = WindowInputs {
+            now: 1_760_000_000_000,
+            requests: &[],
+            source_granularity_ms: HOUR,
+            collection_started_at: None,
+            gaps: &[],
+            retention_horizon: None,
+            collection_ranges: &[],
+        };
+        let cells = compute_windows(&base);
+        let one_hour = cells.iter().find(|c| c["key"] == "1h").unwrap();
+        assert_ne!(one_hour["coverage"], "unavailable", "an hourly source answers 1h");
+        let day = cells.iter().find(|c| c["key"] == "24h").unwrap();
+        assert_ne!(day["coverage"], "unavailable", "an hourly source answers 24h");
+
+        let daily = WindowInputs { source_granularity_ms: DAY, ..base };
+        let cells = compute_windows(&daily);
+        let day = cells.iter().find(|c| c["key"] == "24h").unwrap();
+        assert_ne!(day["coverage"], "unavailable", "a daily source answers 24h");
+        let ten_min = cells.iter().find(|c| c["key"] == "10m").unwrap();
+        assert_eq!(ten_min["coverage"], "unavailable", "a daily source cannot answer 10m");
     }
 
     fn aggregate_row(event_time: i64, requests: i64) -> Value {
@@ -745,7 +858,7 @@ mod tests {
                 "source": "openrouter.analytics.day",
             }),
         ];
-        let result = build_breakdown(&rows, now - HOUR, now, "model", &recorded_ranges(now));
+        let result = build_breakdown(&rows, "1h", now, now, "model", &recorded_ranges(now));
         let out = result["rows"].as_array().unwrap();
         assert_eq!(out.len(), 2, "two models");
         assert_eq!(out[0]["label"], "model-a", "largest spend leads");
@@ -763,7 +876,7 @@ mod tests {
             breakdown_row(now - 5 * MINUTE, "model-b", "VScode M1", 50, 1_000_000),
             breakdown_row(now - 7 * MINUTE, "model-a", "Strix M5", 10, 500_000),
         ];
-        let result = build_breakdown(&rows, now - HOUR, now, "key", &recorded_ranges(now));
+        let result = build_breakdown(&rows, "1h", now, now, "key", &recorded_ranges(now));
         let out = result["rows"].as_array().unwrap();
         assert_eq!(out.len(), 2, "two keys");
         assert_eq!(out[0]["label"], "VScode M1");
@@ -777,8 +890,131 @@ mod tests {
         // must say so rather than render an empty table that reads as "no
         // usage".
         let now = 1_760_000_000_000;
-        let result = build_breakdown(&[], now - 10 * MINUTE, now, "model", &[]);
+        let result = build_breakdown(&[], "10m", now, now, "model", &[]);
         assert_eq!(result["incomplete"], true);
         assert_eq!(result["rows"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn a_breakdown_adds_up_to_the_interval_button() {
+        // Rule: the table and the range buttons are one figure. Minute rows
+        // cover the last two hours and hour rows cover the day; the window sums
+        // the recent bins from minute rows and the older bins from hour rows,
+        // and the table must select rows the same way.
+        let now = 1_760_000_000_000;
+        let ranges = recorded_ranges(now);
+        let rows = vec![
+            breakdown_row(now - 5 * MINUTE, "model-a", "key-1", 10, 100),
+            breakdown_row(now - 65 * MINUTE, "model-a", "key-1", 20, 200),
+            json!({
+                "event_time": format_time(now - 5 * HOUR),
+                "model": "model-a",
+                "key_id": "key-1",
+                "key_name": "key-1",
+                "cost_micro": 1_000,
+                "total_tokens": 100,
+                "source": "openrouter.analytics.hour",
+            }),
+            json!({
+                "event_time": format_time(now - 20 * HOUR),
+                "model": "model-b",
+                "key_id": "key-2",
+                "key_name": "key-2",
+                "cost_micro": 2_000,
+                "total_tokens": 200,
+                "source": "openrouter.analytics.hour",
+            }),
+        ];
+
+        let breakdown = build_breakdown(&rows, "24h", now, now, "model", &ranges);
+        let table_spend: i64 = breakdown["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["spend_micro"].as_i64().unwrap_or(0))
+            .sum();
+        let table_tokens: i64 = breakdown["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["total_tokens"].as_i64().unwrap_or(0))
+            .sum();
+
+        let cells = compute_windows(&WindowInputs {
+            now,
+            requests: &rows,
+            source_granularity_ms: MINUTE,
+            collection_started_at: None,
+            gaps: &[],
+            retention_horizon: None,
+            collection_ranges: &ranges,
+        });
+        let day = cells.iter().find(|c| c["key"] == "24h").unwrap();
+
+        assert_eq!(table_spend, day["spend_micro"].as_i64().unwrap(), "table spend equals the 24h button");
+        assert_eq!(table_tokens, day["total_tokens"].as_i64().unwrap(), "table tokens equal the 24h button");
+    }
+
+    /// Consistency check against the live database, when it exists.
+    ///
+    /// The interval buttons and the Models/Keys tables must total the same
+    /// figure at every scale, and the scales must be monotonic. Reads the real
+    /// widget.db on the developer's machine; a no-op anywhere else.
+    #[test]
+    fn the_live_database_is_consistent_across_every_scale() {
+        let home = match std::env::var("HOME") {
+            Ok(h) => h,
+            Err(_) => return,
+        };
+        let dir = std::path::PathBuf::from(home).join("Library/Application Support/OpenRouter Meter");
+        if !dir.join("widget.db").exists() {
+            eprintln!("no live database; skipping");
+            return;
+        }
+        let db = crate::db::Db::open(&dir).unwrap();
+        let requests = db.list_requests(100_000, None);
+        let ranges = db.collection_ranges();
+        let now = crate::logging::now_ms();
+
+        let mut previous: Option<i64> = None;
+        for scale in ["10m", "1h", "3h", "6h", "24h"] {
+            let cells = compute_windows(&WindowInputs {
+                now,
+                requests: &requests,
+                source_granularity_ms: MINUTE,
+                collection_started_at: None,
+                gaps: &[],
+                retention_horizon: None,
+                collection_ranges: &ranges,
+            });
+            let cell = cells.iter().find(|c| c["key"] == scale).unwrap();
+            let button_spend = cell["spend_micro"].as_i64().unwrap_or(0);
+            let button_tokens = cell["total_tokens"].as_i64().unwrap_or(0);
+
+            for group_by in ["model", "key"] {
+                let breakdown = build_breakdown(&requests, scale, now, now, group_by, &ranges);
+                let rows = breakdown["rows"].as_array().unwrap();
+                let table_spend: i64 =
+                    rows.iter().map(|r| r["spend_micro"].as_i64().unwrap_or(0)).sum();
+                let table_tokens: i64 =
+                    rows.iter().map(|r| r["total_tokens"].as_i64().unwrap_or(0)).sum();
+                assert_eq!(
+                    button_spend, table_spend,
+                    "{scale} {group_by} table spend disagrees with the button"
+                );
+                assert_eq!(
+                    button_tokens, table_tokens,
+                    "{scale} {group_by} table tokens disagree with the button"
+                );
+            }
+
+            if let Some(prev) = previous {
+                assert!(
+                    button_spend >= prev,
+                    "{scale} spend ({button_spend}) is less than the previous window ({prev})"
+                );
+            }
+            previous = Some(button_spend);
+        }
     }
 }

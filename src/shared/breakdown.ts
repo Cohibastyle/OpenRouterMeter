@@ -14,6 +14,7 @@
 
 import { selectGranularity, type CollectionRange } from './granularity.js';
 import { sumMicroOrNull } from './money.js';
+import { buildPeriod, clippedBinInterval, inHalfOpenRange, type ChartScale } from './chart.js';
 
 export type BreakdownGroupBy = 'model' | 'key';
 
@@ -67,31 +68,53 @@ function groupKeyOf(row: BreakdownInput, groupBy: BreakdownGroupBy): { id: strin
 }
 
 /**
- * Build a breakdown for `[start, end)`.
+ * Build a breakdown for the trailing window `scale` ending at `anchor`.
+ *
+ * The rows are selected exactly the way the chart selects them: one granularity
+ * per bin, clipped to the trailing window. A single granularity for the whole
+ * window dropped the current partial bin's minute rows whenever hour rows also
+ * covered the range, so the table's total drifted from the interval buttons —
+ * which sum the same bins the chart draws.
  *
  * @param rows Every stored usage row, at any granularity.
  * @param ranges The recorded fetch range per granularity.
+ * @param now Evaluation instant; defaults to the clock. Tests freeze this.
  */
 export function buildBreakdown(
   rows: ReadonlyArray<BreakdownInput>,
-  start: number,
-  end: number,
+  scale: ChartScale,
+  anchor: number,
   groupBy: BreakdownGroupBy,
   ranges: ReadonlyArray<CollectionRange> = [],
+  now: number = anchor,
 ): BreakdownResult {
-  const choice = selectGranularity(rows, start, end, Number.POSITIVE_INFINITY, ranges);
-  if (choice.granularityMs === null) {
-    return { group_by: groupBy, rows: [], granularity_ms: null, incomplete: true };
-  }
+  const period = buildPeriod(scale, anchor, 'monday');
+  const axisEnd = Math.min(period.end, now);
 
   const groups = new Map<string, BreakdownInput[]>();
-  for (const row of choice.rows) {
-    const t = new Date(row.event_time).getTime();
-    if (Number.isNaN(t) || t < start || t >= end) continue;
-    const { id } = groupKeyOf(row, groupBy);
-    const bucket = groups.get(id);
-    if (bucket) bucket.push(row);
-    else groups.set(id, [row]);
+  let anyRow = false;
+
+  for (const bin of period.bins) {
+    if (bin.start >= axisEnd) continue;
+    const clip = clippedBinInterval(bin.start, bin.end, period.start, axisEnd);
+    if (!clip) continue;
+    // One granularity per bin — the same choice buildChart makes for the same
+    // bin, so the table and the bars cannot disagree. Overlap is enough, for
+    // the same reason it is in the chart.
+    const choice = selectGranularity(rows, clip.start, clip.end, bin.end - bin.start, ranges, true);
+    for (const row of choice.rows) {
+      const t = new Date(row.event_time).getTime();
+      if (Number.isNaN(t) || !inHalfOpenRange(t, clip.start, clip.end)) continue;
+      anyRow = true;
+      const { id } = groupKeyOf(row, groupBy);
+      const bucket = groups.get(id);
+      if (bucket) bucket.push(row);
+      else groups.set(id, [row]);
+    }
+  }
+
+  if (!anyRow) {
+    return { group_by: groupBy, rows: [], granularity_ms: null, incomplete: true };
   }
 
   const out: BreakdownRow[] = [];
@@ -122,5 +145,7 @@ export function buildBreakdown(
     return (b.total_tokens ?? 0) - (a.total_tokens ?? 0);
   });
 
-  return { group_by: groupBy, rows: out, granularity_ms: choice.granularityMs, incomplete: false };
+  // Bins can mix granularities (minute rows for the current partial bin, hour
+  // rows for older ones), so no single granularity names the table.
+  return { group_by: groupBy, rows: out, granularity_ms: null, incomplete: false };
 }

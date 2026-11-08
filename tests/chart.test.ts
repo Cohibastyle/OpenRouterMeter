@@ -138,3 +138,96 @@ test('a 24h total includes the current hour of minute rows', () => {
   assert.equal(chart.total_spend_micro, 1_500_000);
   assert.equal(CHART_BIN_MS['24h'], HOUR);
 });
+
+test('every window cell equals the sum of the chart bars for the same range and anchor', () => {
+  // Rule: the big number, the range buttons, and the chart bars are one figure.
+  // The windows are computed from the same bins the chart draws, so at one
+  // anchor the two totals must be identical for every range.
+  const ranges: CollectionRange[] = [
+    {
+      granularity_ms: MINUTE,
+      range_start: new Date(NOW - 2 * HOUR).toISOString(),
+      range_end: new Date(NOW).toISOString(),
+    },
+    {
+      granularity_ms: HOUR,
+      range_start: new Date(NOW - DAY).toISOString(),
+      range_end: new Date(NOW).toISOString(),
+    },
+  ];
+  const rows = [
+    request(NOW - 5 * MINUTE, 500_000, 100, 'openrouter.analytics.minute'),
+    request(NOW - 25 * MINUTE, 250_000, 50, 'openrouter.analytics.minute'),
+    request(NOW - 90 * MINUTE, 750_000, 150, 'openrouter.analytics.minute'),
+    request(NOW - 5 * HOUR, 1_000_000, 200, 'openrouter.analytics.hour'),
+    request(NOW - 20 * HOUR, 2_000_000, 400, 'openrouter.analytics.hour'),
+  ];
+  const windows = computeWindows({
+    now: NOW,
+    requests: rows,
+    sourceGranularityMs: MINUTE,
+    collectionStartedAt: NOW - 400 * DAY,
+    gaps: [],
+    retentionHorizon: NOW - 90 * DAY,
+    stale: false,
+    collectionRanges: ranges,
+  });
+
+  for (const scale of ['10m', '1h', '3h', '6h', '24h'] as const) {
+    const cell = windows.find((w) => w.key === scale)!;
+    const chart = buildChart({ ...chartRequest(rows, scale), collectionRanges: ranges });
+    const barSpend = chart.bins.reduce((sum, bin) => sum + (bin.spend_micro ?? 0), 0);
+    const barTokens = chart.bins.reduce((sum, bin) => sum + (bin.total_tokens ?? 0), 0);
+    assert.equal(cell.spend_micro, barSpend, `${scale} spend: button vs bars`);
+    assert.equal(cell.spend_micro, chart.total_spend_micro, `${scale} spend: button vs chart total`);
+    assert.equal(cell.total_tokens, barTokens, `${scale} tokens: button vs bars`);
+  }
+});
+
+test('a wider window never totals less than a narrower one at the range edge', () => {
+  // The minute range is a sliding two hours, so its start falls inside a 6h
+  // bin. That bin still holds real minute rows; dropping it made 6h total less
+  // than 3h. Overlap with rows inside must qualify the granularity.
+  const ranges: CollectionRange[] = [
+    {
+      granularity_ms: MINUTE,
+      // The range starts 17 minutes into the 6h scale's third bin.
+      range_start: new Date(NOW - 2 * HOUR + 17 * MINUTE).toISOString(),
+      range_end: new Date(NOW).toISOString(),
+    },
+    {
+      granularity_ms: HOUR,
+      range_start: new Date(NOW - DAY).toISOString(),
+      range_end: new Date(NOW).toISOString(),
+    },
+  ];
+  const rows = [
+    // Minute rows only exist from the range start onward.
+    request(NOW - 2 * HOUR + 20 * MINUTE, 1_000_000, 100, 'openrouter.analytics.minute'),
+    request(NOW - 30 * MINUTE, 500_000, 50, 'openrouter.analytics.minute'),
+    // Hour rows cover the day, including the hours the minute range misses.
+    request(NOW - 5 * HOUR, 2_000_000, 200, 'openrouter.analytics.hour'),
+  ];
+  const windows = computeWindows({
+    now: NOW,
+    requests: rows,
+    sourceGranularityMs: MINUTE,
+    collectionStartedAt: NOW - 400 * DAY,
+    gaps: [],
+    retentionHorizon: NOW - 90 * DAY,
+    stale: false,
+    collectionRanges: ranges,
+  });
+  const totals = ['10m', '1h', '3h', '6h', '24h'].map(
+    (key) => windows.find((w) => w.key === key)!.spend_micro ?? 0,
+  );
+  for (let i = 1; i < totals.length; i += 1) {
+    assert.ok(
+      totals[i]! >= totals[i - 1]!,
+      `window ${i} (${totals[i]}) must not be less than window ${i - 1} (${totals[i - 1]})`,
+    );
+  }
+  // The 6h window counts the minute rows at the range edge and the hour row
+  // five hours back.
+  assert.equal(totals[3], 3_500_000);
+});

@@ -319,7 +319,10 @@ impl AppState {
 
     pub fn live_snapshot(&self) -> Value {
         let now = now_ms();
-        let requests = self.all_requests();
+        // The snapshot reads the observation log as of its own instant, so the
+        // figure is a deterministic function of the data, not of when each row
+        // happened to be re-collected.
+        let requests = self.requests_as_of(now);
         let version = {
             let mut v = self.snapshot_version.lock().unwrap_or_else(|e| e.into_inner());
             *v += 1;
@@ -377,7 +380,6 @@ impl AppState {
     /// Build chart data from the stored rows for the requested range.
     pub fn live_chart(&self, params: &Value) -> Value {
         let now = now_ms();
-        let all = self.all_requests();
         let settings = self.settings();
         let ranges = self.collection_ranges();
 
@@ -386,6 +388,7 @@ impl AppState {
         let anchor = params["anchor"].as_i64().unwrap_or(now);
         let axis = settings["display"]["chart_axis"].as_str().unwrap_or("log").to_string();
         let key_id = params["keyId"].as_str();
+        let all = self.requests_as_of(anchor);
         let requests: Vec<Value> = match key_id {
             Some(id) => all
                 .into_iter()
@@ -406,13 +409,21 @@ impl AppState {
         })
     }
 
-    fn all_requests(&self) -> Vec<Value> {
+    /**
+     * The latest observation of every bucket at-or-before `as_of`.
+     *
+     * The observation log makes this a deterministic read: the data as of an
+     * instant, unaffected by later collections. The snapshot, the chart, and
+     * the Models/Keys tables all read through here at the snapshot's instant,
+     * so every figure the user sees comes from one frozen view of the data.
+     */
+    fn requests_as_of(&self, as_of: i64) -> Vec<Value> {
         let guard = match self.db.lock() {
             Ok(g) => g,
             Err(_) => return Vec::new(),
         };
         match guard.as_ref() {
-            Some(db) => db.list_requests(100_000, None),
+            Some(db) => db.list_requests_as_of(as_of, None),
             None => Vec::new(),
         }
     }
@@ -466,17 +477,22 @@ impl AppState {
 
     /// Group the stored rows for the Models and Keys tabs.
     ///
-    /// The renderer asks for a trailing window in ms and, for the Models tab, an
-    /// optional key scope. The Keys tab always asks for every key, so a scoped
-    /// view does not collapse to the one key already selected.
+    /// The renderer asks for a chart scale and, for the Models tab, an optional
+    /// key scope. The Keys tab always asks for every key, so a scoped view does
+    /// not collapse to the one key already selected. Range lengths stay defined
+    /// by the Rust accounting layer rather than being sent as derived values.
     pub fn breakdown(&self, params: &Value) -> Value {
         let group_by = params["groupBy"].as_str().unwrap_or("model");
-        let window_ms = params["windowMs"].as_i64().unwrap_or(24 * 60 * 60 * 1000);
+        let scale = params["scale"].as_str().unwrap_or("24h");
         let key_id = params["keyId"].as_str();
 
         let now = now_ms();
-        let start = now - window_ms;
-        let requests = self.all_requests();
+        // The renderer passes the snapshot's own instant as the anchor, so the
+        // table sums the same trailing window the interval buttons show. A
+        // fresh clock read here would slide the window between the snapshot and
+        // this call, and the table would count rows the buttons do not.
+        let anchor = params["anchor"].as_i64().unwrap_or(now);
+        let requests = self.requests_as_of(anchor);
         let scoped: Vec<Value> = match key_id {
             Some(id) => requests
                 .into_iter()
@@ -486,7 +502,7 @@ impl AppState {
         };
         let ranges = self.collection_ranges();
 
-        crate::accounting::build_breakdown(&scoped, start, now, group_by, &ranges)
+        crate::accounting::build_breakdown(&scoped, scale, anchor, now, group_by, &ranges)
     }
 
     pub fn stored_logs(&self, limit: usize) -> Value {
