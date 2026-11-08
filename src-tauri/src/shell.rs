@@ -16,14 +16,6 @@ use crate::state::AppState;
 const DEFAULT_WIDTH: f64 = 320.0;
 const DEFAULT_HEIGHT: f64 = 240.0;
 
-/// Sizes the Electron `--capture` mode renders, so the two sets can be diffed.
-pub const CAPTURE_SIZES: &[(&str, f64, f64)] = &[
-    ("01-spending-micro-180x120", 180.0, 120.0),
-    ("02-spending-compact-320x240", 320.0, 240.0),
-    ("03-spending-standard-480x360", 480.0, 360.0),
-    ("04-spending-expanded-900x560", 900.0, 560.0),
-];
-
 pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState::new();
     state.seed_if_empty();
@@ -37,7 +29,9 @@ pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     register_shortcuts(app.handle());
 
     if let Some(window) = app.get_webview_window("main") {
-        apply_always_on_top(&window, "normal");
+        let settings = app.state::<AppState>().settings();
+        let display = settings.get("display").cloned().unwrap_or(Value::Null);
+        apply_window_display_patch(app.handle(), &display);
         let _ = window.show();
         watch_resize(&window);
     }
@@ -215,155 +209,174 @@ pub fn apply_always_on_top(window: &WebviewWindow, level: &str) {
     }
 }
 
-/// Render each size class to a PNG, mirroring the Electron `--capture` mode.
+#[cfg(target_os = "macos")]
+fn apply_opacity(window: &WebviewWindow, percent: f64) {
+    let alpha = (percent.clamp(40.0, 100.0) / 100.0) as f64;
+    let _ = window.with_webview(move |webview| unsafe {
+        // `macos-private-api` is enabled in Cargo.toml, so the platform webview
+        // exposes the parent NSWindow pointer here.
+        let ns_window: &objc2_app_kit::NSWindow = &*webview.ns_window().cast();
+        ns_window.setAlphaValue(alpha as _);
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_opacity(_window: &WebviewWindow, _percent: f64) {}
+
+/// Apply only the display fields that have runtime window effects.
 ///
-/// Tauri has no webview snapshot API, so this uses `screencapture -R` against the
-/// window's own rectangle. The renderer paints an opaque background, so the
-/// capture is the widget and not the desktop behind it.
+/// Settings are stored separately by the caller; this function only mutates the
+/// live window state.
+pub fn apply_window_display_patch(app: &AppHandle, display: &Value) {
+    if let Some(level) = display.get("always_on_top").and_then(|v| v.as_str()) {
+        if let Some(w) = app.get_webview_window("main") {
+            apply_always_on_top(&w, level);
+        }
+    }
+    if let Some(ghost) = display.get("ghost").and_then(|v| v.as_bool()) {
+        set_ghost(app, ghost);
+    }
+    if let Some(opacity) = display.get("opacity").and_then(|v| v.as_f64()) {
+        if let Some(w) = app.get_webview_window("main") {
+            apply_opacity(&w, opacity);
+        }
+    }
+}
+
+/// Capture the window, retrying while the webview buffer is still flat.
+fn capture_retry(window: &WebviewWindow, path: &std::path::Path, name: &str) {
+    for _ in 0..8 {
+        match crate::capture::capture_window(window, path) {
+            crate::capture::Capture::Painted => {
+                println!("captured {name}");
+                return;
+            }
+            crate::capture::Capture::Blank => {
+                std::thread::sleep(std::time::Duration::from_millis(400));
+            }
+            crate::capture::Capture::Failed => {
+                println!("failed {name}");
+                return;
+            }
+        }
+    }
+    println!("warning {name} not painted");
+}
+
+/// Resize the window, wait for the layout to settle, then capture.
+fn capture_at(window: &WebviewWindow, out_dir: &std::path::Path, name: &str, w: f64, h: f64) {
+    let _ = window.set_size(tauri::LogicalSize::new(w, h));
+    let _ = window.show();
+    let _ = window.set_focus();
+    let _ = window.set_always_on_top(true);
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+    capture_retry(window, &out_dir.join(format!("{name}.png")), name);
+}
+
+/// Click a tab by its accessible label, then capture the window once it paints.
+fn capture_tab(window: &WebviewWindow, out_dir: &std::path::Path, label: &str, name: &str, w: f64, h: f64) {
+    let _ = window.set_size(tauri::LogicalSize::new(w, h));
+    let _ = window.show();
+    let _ = window.set_focus();
+    std::thread::sleep(std::time::Duration::from_millis(700));
+    let _ = window.eval(format!(
+        "(() => {{
+           const tab = [...document.querySelectorAll('#tabbar button')]
+             .find((b) => (b.getAttribute('aria-label') || '') === {label:?});
+           tab?.click();
+         }})()"
+    ));
+    std::thread::sleep(std::time::Duration::from_millis(1600));
+    capture_retry(window, &out_dir.join(format!("{name}.png")), name);
+}
+
+/// Expand one Settings group by its header text, collapsing the others first so
+/// the group is on screen: the capture is a bitmap of the window, so an
+/// off-screen panel cannot be seen.
+fn expand_settings_group(window: &WebviewWindow, group: &str) {
+    let _ = window.eval(format!(
+        "(() => {{
+           const heads = () => [...document.querySelectorAll('.group-header')];
+           for (const h of heads()) {{
+             const t = (h.textContent || '').trim();
+             if (!t.startsWith({group:?}) && h.getAttribute('aria-expanded') === 'true') {{
+               h.click();
+             }}
+           }}
+         }})()"
+    ));
+    std::thread::sleep(std::time::Duration::from_millis(700));
+    let _ = window.eval(format!(
+        "(() => {{
+           const target = [...document.querySelectorAll('.group-header')]
+             .find((h) => (h.textContent || '').trim().startsWith({group:?}));
+           if (target && target.getAttribute('aria-expanded') === 'false') target.click();
+         }})()"
+    ));
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+}
+
+/// Render the screenshots the README embeds, straight into `docs/images/`.
+///
+/// Tauri has no webview snapshot API, so this reads the window's own buffer.
+/// A screen grab would not do: the window is transparent with a
+/// `backdrop-filter` shell, so it composites against the desktop and comes out
+/// blurred.
 pub fn run_capture(app: AppHandle) {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(2500));
 
-        let out_dir = std::env::temp_dir().join("ormeter-tauri-captures");
+        let out_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map(|p| p.join("docs").join("images"))
+            .unwrap_or_else(|| std::env::temp_dir().join("ormeter-captures"));
         let _ = std::fs::create_dir_all(&out_dir);
 
-        for (name, w, h) in CAPTURE_SIZES {
-            let Some(window) = app.get_webview_window("main") else { return };
-            let _ = window.set_size(tauri::LogicalSize::new(*w, *h));
-            // Raise the window before capturing: `screencapture -R` records
-            // whatever is on screen in that rectangle, so an occluding window
-            // would be captured instead of the widget.
-            let _ = window.show();
-            let _ = window.set_focus();
-            let _ = window.set_always_on_top(true);
-            std::thread::sleep(std::time::Duration::from_millis(1200));
+        let Some(window) = app.get_webview_window("main") else { return };
 
-            let scale = window.scale_factor().unwrap_or(1.0);
-            let pos = window.outer_position().unwrap_or_default();
-            let size = window.inner_size().unwrap_or_default();
+        // The four size classes, on the Spending tab, at the dimensions the
+        // README's own table defines: Micro (XS/Short), Compact (S + Regular),
+        // Standard (M + Regular), Expanded (L/XL + Tall).
+        capture_at(&window, &out_dir, "spending-micro", 180.0, 120.0);
+        capture_at(&window, &out_dir, "spending-compact", 320.0, 240.0);
+        capture_at(&window, &out_dir, "spending-standard", 480.0, 360.0);
+        capture_at(&window, &out_dir, "spending-expanded", 900.0, 560.0);
 
-            // screencapture -R takes points, so divide the physical pixels back
-            // down by the display scale factor.
-            let x = pos.x as f64 / scale;
-            let y = pos.y as f64 / scale;
-            let cw = size.width as f64 / scale;
-            let ch = size.height as f64 / scale;
+        // The other tabs, at a size that shows the chart and the tables.
+        capture_tab(&window, &out_dir, "Tokens", "tokens", 480.0, 360.0);
+        capture_tab(&window, &out_dir, "Keys", "keys", 480.0, 360.0);
+        capture_tab(&window, &out_dir, "Models", "models", 520.0, 420.0);
 
-            let path = out_dir.join(format!("{name}.png"));
+        // The full-size chart subview, opened the way a user opens it.
+        let _ = window.set_size(tauri::LogicalSize::new(640.0, 420.0));
+        std::thread::sleep(std::time::Duration::from_millis(700));
+        let _ = window.eval(
+            "(() => {
+               const tab = [...document.querySelectorAll('#tabbar button')]
+                 .find((b) => (b.getAttribute('aria-label') || '') === 'Spending');
+               tab?.click();
+             })()",
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        let _ = window.eval(
+            "(() => {
+               const value = document.querySelector('.metric-value.spend');
+               value?.click();
+             })()",
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1600));
+        capture_retry(&window, &out_dir.join("charts.png"), "charts");
 
-            // Prefer the window's own buffer: a transparent window with
-            // backdrop-filter composites against the desktop, so a screen grab
-            // comes out blurred. The first size class is captured before the
-            // webview has painted, so retry while the buffer is still flat.
-            let mut painted = false;
-            for attempt in 0..6 {
-                match crate::capture::capture_window(&window, &path) {
-                    crate::capture::Capture::Painted => {
-                        painted = true;
-                        break;
-                    }
-                    crate::capture::Capture::Blank => {
-                        std::thread::sleep(std::time::Duration::from_millis(400));
-                        if attempt == 5 {
-                            println!("warning {name} still blank after 6 attempts");
-                        }
-                    }
-                    crate::capture::Capture::Failed => break,
-                }
-            }
-            if painted {
-                println!("captured {name} {cw}x{ch}");
-                continue;
-            }
-
-            let rect = format!("{x},{y},{cw},{ch}");
-            let status = std::process::Command::new("screencapture")
-                .args(["-x", "-o", "-R", &rect, &path.to_string_lossy()])
-                .status();
-
-            match status {
-                Ok(s) if s.success() => println!("captured {name} {cw}x{ch} (screen)"),
-                _ => println!("failed {name}"),
-            }
-        }
-
-        // Settings, with a mid-list group expanded, so the scroll-retention and
-        // header-expansion behaviour can be reviewed without a human clicking.
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.set_size(tauri::LogicalSize::new(520.0, 640.0));
-            let _ = window.show();
-            let _ = window.set_focus();
-            std::thread::sleep(std::time::Duration::from_millis(900));
-            let _ = window.eval(
-                "(() => {
-                   const tab = [...document.querySelectorAll('#tabbar button')]
-                     .find((b) => /Settings/i.test(b.textContent || ''));
-                   tab?.click();
-                 })()",
-            );
-            std::thread::sleep(std::time::Duration::from_millis(900));
-            let _ = window.eval(
-                "(() => {
-                   const heads = [...document.querySelectorAll('.group-header')];
-                   const target = heads.find((h) => /Version/i.test(h.textContent || ''));
-                   target?.click();
-                 })()",
-            );
-            std::thread::sleep(std::time::Duration::from_millis(900));
-            // The Log group, to prove the logger writes entries the panel reads.
-            // Collapse the groups above it first so it is on screen: the capture
-            // is a bitmap of the window, so an off-screen panel cannot be seen.
-            let _ = window.eval(
-                "(() => {
-                   const heads = () => [...document.querySelectorAll('.group-header')];
-                   for (const h of heads()) {
-                     const t = (h.textContent || '').trim();
-                     if ((t.startsWith('API key') || t.startsWith('Version')) &&
-                         h.getAttribute('aria-expanded') === 'true') {
-                       h.click();
-                     }
-                   }
-                 })()",
-            );
-            std::thread::sleep(std::time::Duration::from_millis(900));
-            let _ = window.eval(
-                "(() => {
-                   const target = [...document.querySelectorAll('.group-header')]
-                     .find((h) => (h.textContent || '').trim().startsWith('Log'));
-                   if (target && target.getAttribute('aria-expanded') === 'false') target.click();
-                 })()",
-            );
-            std::thread::sleep(std::time::Duration::from_millis(1400));
-            let log_path = out_dir.join("06-settings-log.png");
-            for _ in 0..6 {
-                if let crate::capture::Capture::Painted = crate::capture::capture_window(&window, &log_path) {
-                    println!("captured 06-settings-log");
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(400));
-            }
-            let path = out_dir.join("05-settings-version-expanded.png");
-            let mut done = false;
-            for attempt in 0..8 {
-                match crate::capture::capture_window(&window, &path) {
-                    crate::capture::Capture::Painted => {
-                        println!("captured 05-settings-version-expanded");
-                        done = true;
-                        break;
-                    }
-                    crate::capture::Capture::Blank => {
-                        std::thread::sleep(std::time::Duration::from_millis(400));
-                    }
-                    crate::capture::Capture::Failed => {
-                        println!("failed 05-settings-version-expanded (capture failed, attempt {attempt})");
-                        break;
-                    }
-                }
-            }
-            if !done {
-                println!("warning 05-settings-version-expanded not painted");
-            }
-        }
+        // Settings, then two of its groups expanded.
+        capture_tab(&window, &out_dir, "Settings", "settings", 480.0, 420.0);
+        expand_settings_group(&window, "Display");
+        capture_retry(&window, &out_dir.join("settings-display.png"), "settings-display");
+        // The log needs the height: it is the last group, so a short window
+        // leaves only a line or two of entries under the filter row.
+        let _ = window.set_size(tauri::LogicalSize::new(480.0, 640.0));
+        std::thread::sleep(std::time::Duration::from_millis(900));
+        expand_settings_group(&window, "Log");
+        capture_retry(&window, &out_dir.join("log.png"), "log");
 
         println!("captures written to {}", out_dir.display());
         app.exit(0);
@@ -393,6 +406,7 @@ pub fn window_state(app: &AppHandle, state: &AppState) -> Value {
         "always_on_top": settings["display"]["always_on_top"],
         "ghost": settings["display"]["ghost"],
         "opacity": settings["display"]["opacity"],
+        "native_opacity": cfg!(target_os = "macos"),
         "visible": true,
         "layout": layout_for(width, height),
     })
@@ -409,15 +423,17 @@ pub fn apply_window_patch(app: &AppHandle, state: &AppState, patch: Value) {
             }
         }
     }
-    if let Some(level) = patch.get("always_on_top").and_then(|v| v.as_str()) {
-        if let Some(w) = app.get_webview_window("main") {
-            apply_always_on_top(&w, level);
+    apply_window_display_patch(app, &patch);
+
+    let mut display = serde_json::Map::new();
+    for key in ["always_on_top", "ghost", "opacity"] {
+        if let Some(value) = patch.get(key) {
+            display.insert(key.to_string(), value.clone());
         }
     }
-    if let Some(ghost) = patch.get("ghost").and_then(|v| v.as_bool()) {
-        set_ghost(app, ghost);
+    if !display.is_empty() {
+        let _ = state.apply_settings_patch(json!({ "display": display }));
     }
-    let _ = state.apply_settings_patch(json!({ "display": patch }));
 }
 
 pub fn reset_size(app: &AppHandle) -> Value {

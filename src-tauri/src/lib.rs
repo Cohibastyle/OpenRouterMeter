@@ -39,6 +39,7 @@ pub fn run() {
             bridge::window_hide,
             bridge::window_close,
             bridge::window_reset_size,
+            bridge::window_move_by,
             bridge::settings_get,
             bridge::settings_set,
             bridge::settings_reset,

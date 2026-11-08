@@ -200,8 +200,18 @@ export function hitTest(
  * A range with no extent has no left or right edge to interpolate between, so
  * every instant maps to the right edge and the time at any position is `tEnd`.
  * That keeps a degenerate chart to one bar rather than dividing by zero.
+ *
+ * `clamp` defaults to true, which keeps every position inside the plot. A live
+ * chart that pans with the clock passes false: its bins must be allowed to slide
+ * off the left edge as the window moves, or a bucket from the start of the
+ * period would stay pinned to the axis and read as the oldest current value.
  */
-export function createTimeAxis(tStart: number, tEnd: number): TimeAxis {
+export function createTimeAxis(
+  tStart: number,
+  tEnd: number,
+  options: { clamp?: boolean } = {},
+): TimeAxis {
+  const clamp = options.clamp ?? true;
   const span = tEnd - tStart;
   if (!(span > 0)) {
     return {
@@ -211,8 +221,12 @@ export function createTimeAxis(tStart: number, tEnd: number): TimeAxis {
       timeAt: () => tEnd,
     };
   }
-  const positionOf = (time: number): number => clamp01((time - tStart) / span);
-  const timeAt = (position: number): number => tStart + clamp01(position) * span;
+  const map = (value: number): number => {
+    if (!Number.isFinite(value)) return 0;
+    return clamp ? clamp01(value) : value;
+  };
+  const positionOf = (time: number): number => map((time - tStart) / span);
+  const timeAt = (position: number): number => tStart + map(position) * span;
   return { tStart, tEnd, positionOf, timeAt };
 }
 

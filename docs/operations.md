@@ -34,10 +34,11 @@ npm run capture    # render each size class to PNG
 side on change, so there is no separate watch mode.
 
 `npm run capture` builds the app bundle and runs it with `--capture`, which
-renders each size class to a bitmap in the temp directory. It is the only
-reliable way to screenshot the widget: the window is transparent with a
-`backdrop-filter`, so a screen grab composites against the desktop and comes out
-blurred.
+drives the UI through every tab and writes the eleven README screenshots straight
+into `docs/images/`. It reads the window's own buffer rather than taking a screen
+grab, so it works whether or not the widget is frontmost and never pulls in
+whatever happens to be behind it. The first run after a rebuild can come back
+flat while the webview is still painting; re-running it is enough.
 
 ## Toolchain
 

@@ -56,11 +56,12 @@ const STRIP_CELLS = 21;
  * counter feel inconsistent between one refresh and the next; a roll that
  * finishes early simply rests on its new value.
  *
- * The arrival curve is `easeOutCubic`, so a digit decelerates into place and
- * stops dead. Overshoot was measured and rejected: an easeOutBack kicks past the
- * target by a fraction of the column's own travel, so a two-digit increase
- * reverses through a whole digit while a one-cent increase moves imperceptibly,
- * and a number that travels backwards reads as a counting error.
+ * The arrival curve is version C (`easeInOutQuad`), so a digit starts gently,
+ * moves decisively through the middle, then settles without overshoot.
+ * Overshoot was measured and rejected: an easeOutBack kicks past the target by
+ * a fraction of the column's own travel, so a two-digit increase reverses
+ * through a whole digit while a one-cent increase moves imperceptibly, and a
+ * number that travels backwards reads as a counting error.
  */
 const STEP_MS = 105;
 const BEAT_MS = 170;
@@ -69,8 +70,8 @@ function isDigit(char: string): boolean {
   return char >= '0' && char <= '9';
 }
 
-export function easeOutCubic(t: number): number {
-  return 1 - Math.pow(1 - t, 3);
+export function easeInOutQuad(t: number): number {
+  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 }
 
 /**
@@ -304,7 +305,7 @@ export function animateHeadline(
         1,
         Math.max(0, elapsed - roll.startMs) / (roll.steps * roll.stepMs),
       );
-      column.strip.style.transform = translateFor(roll.from + roll.steps * easeOutCubic(progress));
+      column.strip.style.transform = translateFor(roll.from + roll.steps * easeInOutQuad(progress));
     }
     if (elapsed < plan.durationMs) requestAnimationFrame(frame);
     else {
@@ -327,7 +328,7 @@ function countUp(
   const start = performance.now();
   const frame = (now: number) => {
     const t = Math.min(1, (now - start) / durationMs);
-    element.textContent = format(from + (to - from) * easeOutCubic(t));
+    element.textContent = format(from + (to - from) * easeInOutQuad(t));
     if (t < 1) requestAnimationFrame(frame);
     else {
       element.textContent = format(to);

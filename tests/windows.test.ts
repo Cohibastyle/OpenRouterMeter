@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { computeWindows, cellValue } from '../src/shared/windows.ts';
 import { microFromDecimalString, microToDecimalString, sumMicroOrNull } from '../src/shared/money.ts';
-import { formatSpend, formatTokensCompact, formatAge } from '../src/shared/format.ts';
+import { formatSpend, formatSpendHeadline, formatTokensCompact, formatAge } from '../src/shared/format.ts';
 import type { RequestRecord } from '../src/shared/types.ts';
 
 const MINUTE = 60_000;
@@ -73,14 +73,12 @@ test('overlapping windows are never summed as if disjoint', () => {
   assert.equal(sum, 5_000_000, 'summing overlapping windows multiplies the value, which is why it is forbidden');
 });
 
-test('hourly source granularity marks the 1h window unavailable', () => {
+test('hourly source granularity can answer the 1h window', () => {
   const inputs = { ...baseInputs([]), sourceGranularityMs: HOUR };
   const cells = computeWindows(inputs);
 
   const oneHour = cells.find((c) => c.key === '1h')!;
-  assert.equal(oneHour.coverage, 'unavailable');
-  assert.equal(oneHour.partial_reason, 'source_granularity');
-  assert.equal(oneHour.spend_micro, null, 'an unavailable window must not be interpolated');
+  assert.equal(oneHour.coverage, 'full', 'an hourly source can answer a 1h window');
   // A day-long window is still computable from hourly bins.
   assert.notEqual(cells.find((c) => c.key === '24h')!.coverage, 'unavailable');
 });
@@ -102,11 +100,12 @@ test('daily source granularity marks the short windows unavailable', () => {
   }
 });
 
-test('a source granularity of one quarter of the window is computable', () => {
-  const inputs = { ...baseInputs([]), sourceGranularityMs: 6 * HOUR };
+test('a source granularity coarser than the window is unavailable', () => {
+  // A 48h source cannot answer a 24h window, because no bins would cover it.
+  const inputs = { ...baseInputs([]), sourceGranularityMs: 48 * HOUR };
   const cells = computeWindows(inputs);
   const day = cells.find((c) => c.key === '24h')!;
-  assert.notEqual(day.coverage, 'unavailable', '6h bins are exactly a quarter of 24h');
+  assert.equal(day.coverage, 'unavailable', '48h bins cannot answer a 24h window');
 });
 
 test('a collection start inside a window marks that cell partial', () => {
@@ -190,6 +189,33 @@ test('spend at or above one dollar uses two decimals', () => {
   assert.equal(formatSpend(123_456_789), '$123.46');
 });
 
+test('a headline spend keeps a tenth-of-a-cent step above a dollar', () => {
+  // The bug: two decimals rounded a live 24-hour total to a figure that several
+  // cents of new usage left unchanged, so the headline sat still while it was
+  // rising and, because the roll only fires on a text change, never rolled.
+  assert.equal(formatSpendHeadline(4_516_219), '$4.516');
+  assert.equal(formatSpendHeadline(4_521_219), '$4.521');
+  assert.notEqual(
+    formatSpendHeadline(4_516_219),
+    formatSpendHeadline(4_521_219),
+    'a five-cent rise must move the headline',
+  );
+  // Half a cent is the smallest step the headline can still show.
+  assert.notEqual(formatSpendHeadline(4_516_219), formatSpendHeadline(4_517_219));
+});
+
+test('a headline spend keeps four significant digits below a dollar', () => {
+  assert.equal(formatSpendHeadline(0), '$0.00');
+  assert.equal(formatSpendHeadline(123_456), '$0.1235');
+  assert.equal(formatSpendHeadline(3_091), '$0.003091');
+});
+
+test('a large headline spend falls back to compact notation', () => {
+  // A six-figure total has to stay short enough for a narrow window, so it is
+  // stated compactly rather than to a fraction of a cent.
+  assert.equal(formatSpendHeadline(1_234_567_890), '$1.23K');
+});
+
 test('tokens use compact notation in the strip', () => {
   assert.equal(formatTokensCompact(148_200), '148.2K');
   assert.equal(formatTokensCompact(1_240_000), '1.24M');
@@ -241,7 +267,16 @@ test('a window sums the source request count, not the number of rows', () => {
     aggregate(NOW - 2 * HOUR, 300),
   ];
 
-  const windows = computeWindows(baseInputs(rows));
+  const windows = computeWindows({
+    ...baseInputs(rows),
+    collectionRanges: [
+      {
+        granularity_ms: MINUTE,
+        range_start: new Date(NOW - DAY).toISOString(),
+        range_end: new Date(NOW).toISOString(),
+      },
+    ],
+  });
   const oneHour = windows.find((c) => c.key === '1h')!;
   const day = windows.find((c) => c.key === '24h')!;
 

@@ -7,7 +7,7 @@ run on real hardware.
 
 | Behavior | Result | Notes |
 |---|---|---|
-| Frameless transparent window | Works | `frame: false`, `transparent: true`, `hasShadow: false` |
+| Frameless opaque window | Works | `frame: false`, `transparent: false`, `hasShadow: true`; a transparent window with a `backdrop-filter` shell made the native drag hit test unreliable |
 | Always on top, normal level | Works | `setAlwaysOnTop(true, 'floating')` |
 | Always on top, stronger level | Works | `setAlwaysOnTop(true, 'screen-saver')`; covers full-screen apps |
 | Visible across Spaces | Works | `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen })` |

@@ -9,10 +9,6 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::state::AppState;
 
-fn fixture(state: &AppState, name: &str) -> Value {
-    state.fixture(name)
-}
-
 #[tauri::command]
 pub fn account_status(state: State<'_, AppState>) -> Value {
     state.live_snapshot()["account"].clone()
@@ -45,8 +41,7 @@ pub fn requests_list(state: State<'_, AppState>, limit: usize, key_id: Option<St
 
 #[tauri::command]
 pub fn requests_breakdown(state: State<'_, AppState>, params: Value) -> Value {
-    let _ = params;
-    fixture(&state, "breakdown")
+    state.breakdown(&params)
 }
 
 #[tauri::command]
@@ -91,14 +86,40 @@ pub fn window_reset_size(app: AppHandle) -> Value {
     crate::shell::reset_size(&app)
 }
 
+/// Move the window by a screen-space delta.
+///
+/// The status bar drives the drag from script because a frameless, transparent
+/// window with a `backdrop-filter` shell does not start a native move. The
+/// renderer sends one delta per pointer move, so this must be cheap and must not
+/// re-apply the whole press.
+#[tauri::command]
+pub fn window_move_by(app: AppHandle, delta: Value) -> Value {
+    let dx = delta["dx"].as_f64().unwrap_or(0.0);
+    let dy = delta["dy"].as_f64().unwrap_or(0.0);
+    if let Some(w) = app.get_webview_window("main") {
+        if let Ok(pos) = w.outer_position() {
+            let scale = w.scale_factor().unwrap_or(1.0);
+            let x = pos.x as f64 + dx * scale;
+            let y = pos.y as f64 + dy * scale;
+            let _ = w.set_position(tauri::LogicalPosition::new(x / scale, y / scale));
+        }
+    }
+    crate::shell::window_state(&app, &app.state::<AppState>())["bounds"].clone()
+}
+
 #[tauri::command]
 pub fn settings_get(state: State<'_, AppState>) -> Value {
     state.settings()
 }
 
 #[tauri::command]
-pub fn settings_set(state: State<'_, AppState>, patch: Value) -> Value {
-    state.apply_settings_patch(patch)
+pub fn settings_set(app: AppHandle, state: State<'_, AppState>, patch: Value) -> Value {
+    let display = patch.get("display").cloned();
+    let result = state.apply_settings_patch(patch);
+    if let Some(display_patch) = display {
+        crate::shell::apply_window_display_patch(&app, &display_patch);
+    }
+    result
 }
 
 #[tauri::command]

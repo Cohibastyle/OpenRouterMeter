@@ -43,6 +43,7 @@ subsets and are never added twice.
 | `app_log` | Persisted application log entries | `seq` |
 | `diagnostic_snapshot` | Captured redacted bundles | `id` |
 | `collector_state` | Cursor, last success, retry time, error code | `id = 1` |
+| `collection_range` | Range each granularity was actually fetched for | `granularity_ms` |
 | `known_gap` | Known coverage gaps | `id` |
 
 ## Duplicate and late delivery

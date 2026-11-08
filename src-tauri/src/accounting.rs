@@ -22,6 +22,62 @@ pub const WINDOWS: &[(&str, i64)] = &[
     ("24h", DAY),
 ];
 
+/// Bin width per chart/window range. Must match src/shared/chart.ts.
+pub fn chart_bin_ms(scale: &str) -> i64 {
+    match scale {
+        "10m" => MINUTE,
+        "1h" => 5 * MINUTE,
+        "3h" => 15 * MINUTE,
+        "6h" => 30 * MINUTE,
+        _ => HOUR,
+    }
+}
+
+/// Trailing span per range. Must match src/shared/chart.ts.
+pub fn chart_range_ms(scale: &str) -> i64 {
+    match scale {
+        "10m" => 10 * MINUTE,
+        "1h" => HOUR,
+        "3h" => 3 * HOUR,
+        "6h" => 6 * HOUR,
+        _ => DAY,
+    }
+}
+
+pub fn in_half_open_range(t: i64, start: i64, end: i64) -> bool {
+    t >= start && t < end
+}
+
+pub fn clipped_bin_interval(
+    bin_start: i64,
+    bin_end: i64,
+    period_start: i64,
+    period_end: i64,
+) -> Option<(i64, i64)> {
+    let start = bin_start.max(period_start);
+    let end = bin_end.min(period_end);
+    if end <= start {
+        None
+    } else {
+        Some((start, end))
+    }
+}
+
+/// Aligned bins covering a trailing window ending at `anchor`.
+pub fn trailing_window_bins(scale: &str, anchor: i64) -> (i64, i64, Vec<(i64, i64)>) {
+    let span = chart_range_ms(scale);
+    let width = chart_bin_ms(scale);
+    let end = anchor;
+    let start = end - span;
+    let mut t = (start as f64 / width as f64).floor() as i64 * width;
+    let mut bins = Vec::new();
+    while t < end {
+        bins.push((t, t + width));
+        t += width;
+    }
+    (start, end, bins)
+}
+
 /// Bucket width implied by a row's source, or None when unknown.
 pub fn granularity_of_source(source: &str) -> Option<i64> {
     if source.ends_with(".minute") {
@@ -200,13 +256,12 @@ pub fn compute_windows(inputs: &WindowInputs<'_>) -> Vec<Value> {
         .iter()
         .map(|(key, ms)| {
             let window_start = inputs.now - ms;
-            let window_end = inputs.now;
 
             let mut cell = json!({
                 "key": key,
                 "label": key,
                 "window_start": format_time(window_start),
-                "window_end": format_time(window_end),
+                "window_end": format_time(inputs.now),
                 "spend_micro": Value::Null,
                 "input_tokens": Value::Null,
                 "output_tokens": Value::Null,
@@ -222,38 +277,57 @@ pub fn compute_windows(inputs: &WindowInputs<'_>) -> Vec<Value> {
                 return cell;
             }
 
-            let choice = select_granularity(
-                inputs.requests,
-                window_start,
-                window_end,
-                *ms,
-                inputs.collection_ranges,
-            );
-            let source: Vec<Value> = if choice.granularity_ms.is_none() {
-                inputs.requests.to_vec()
-            } else {
-                choice.rows
-            };
+            // Same bins as the chart for this range, so the interval button,
+            // the headline, and the bars are one number. One granularity per
+            // bin, clipped to the trailing window.
+            let (period_start, period_end, bins) = trailing_window_bins(key, inputs.now);
+            let axis_end = period_end.min(inputs.now);
+            let mut spend_parts: Vec<Option<i64>> = Vec::new();
+            let mut input_parts: Vec<Option<i64>> = Vec::new();
+            let mut output_parts: Vec<Option<i64>> = Vec::new();
+            let mut total_parts: Vec<Option<i64>> = Vec::new();
+            let mut request_parts: Vec<Option<i64>> = Vec::new();
 
-            let in_window: Vec<&Value> = source
-                .iter()
-                .filter(|r| {
-                    r["event_time"]
-                        .as_str()
-                        .and_then(parse_time)
-                        .map(|t| t > window_start && t <= window_end)
-                        .unwrap_or(false)
-                })
-                .collect();
+            for (bin_start, bin_end) in bins {
+                if bin_start >= axis_end {
+                    continue;
+                }
+                let Some((lo, hi)) = clipped_bin_interval(bin_start, bin_end, period_start, axis_end) else {
+                    continue;
+                };
+                let choice = select_granularity(
+                    inputs.requests,
+                    lo,
+                    hi,
+                    bin_end - bin_start,
+                    inputs.collection_ranges,
+                );
+                let in_bin: Vec<&Value> = choice
+                    .rows
+                    .iter()
+                    .filter(|r| {
+                        r["event_time"]
+                            .as_str()
+                            .and_then(parse_time)
+                            .map(|t| in_half_open_range(t, lo, hi))
+                            .unwrap_or(false)
+                    })
+                    .collect();
+                if in_bin.is_empty() {
+                    continue;
+                }
+                spend_parts.push(sum_or_none(in_bin.iter().map(|r| r["cost_micro"].as_i64())));
+                input_parts.push(sum_or_none(in_bin.iter().map(|r| r["input_tokens"].as_i64())));
+                output_parts.push(sum_or_none(in_bin.iter().map(|r| r["output_tokens"].as_i64())));
+                total_parts.push(sum_or_none(in_bin.iter().map(|r| r["total_tokens"].as_i64())));
+                request_parts.push(sum_or_none(in_bin.iter().map(|r| r["request_count"].as_i64())));
+            }
 
-            let spend = sum_or_none(in_window.iter().map(|r| r["cost_micro"].as_i64()));
-            let input = sum_or_none(in_window.iter().map(|r| r["input_tokens"].as_i64()));
-            let output = sum_or_none(in_window.iter().map(|r| r["output_tokens"].as_i64()));
-            let total = sum_or_none(in_window.iter().map(|r| r["total_tokens"].as_i64()));
-            // The source's own count, not the number of rows: a row is an
-            // aggregate, so counting rows undercounts and makes the figure
-            // depend on which granularity the window selected.
-            let requests = sum_or_none(in_window.iter().map(|r| r["request_count"].as_i64()));
+            let spend = sum_or_none(spend_parts.into_iter());
+            let input = sum_or_none(input_parts.into_iter());
+            let output = sum_or_none(output_parts.into_iter());
+            let total = sum_or_none(total_parts.into_iter());
+            let requests = sum_or_none(request_parts.into_iter());
 
             let reason = partial_reason_for(window_start, inputs);
             let coverage = if reason.is_some() { "partial" } else { "full" };
@@ -335,6 +409,104 @@ pub fn period_totals(
     })
 }
 
+/// Group usage rows into a breakdown for the Models and Keys tabs.
+///
+/// Mirrors `buildBreakdown` in src/shared/breakdown.ts. The public API exposes
+/// aggregates rather than individual generations, so this groups the same
+/// buckets the charts use. One granularity only, for the same reason the windows
+/// use one: the collector stores the same spend at minute, hour, and day
+/// granularity over overlapping ranges.
+pub fn build_breakdown(
+    requests: &[Value],
+    start: i64,
+    end: i64,
+    group_by: &str,
+    ranges: &[(i64, i64, i64)],
+) -> Value {
+    use std::collections::BTreeMap;
+
+    let choice = select_granularity(requests, start, end, i64::MAX, ranges);
+    let Some(granularity_ms) = choice.granularity_ms else {
+        return json!({
+            "group_by": group_by,
+            "rows": [],
+            "granularity_ms": Value::Null,
+            "incomplete": true,
+        });
+    };
+
+    // The group key and its display label. A key row prefers the display name
+    // and falls back to the id, which is a hash and not secret material.
+    let group_of = |row: &Value| -> (String, String) {
+        if group_by == "model" {
+            match row["model"].as_str().map(str::trim).filter(|m| !m.is_empty()) {
+                Some(model) => (format!("model:{model}"), model.to_string()),
+                None => ("model:unknown".to_string(), "Unknown".to_string()),
+            }
+        } else {
+            let name = row["key_name"].as_str().map(str::trim).filter(|s| !s.is_empty());
+            let id = row["key_id"].as_str().map(str::trim).filter(|s| !s.is_empty());
+            match name.or(id) {
+                Some(label) => {
+                    let id = row["key_id"].as_str().unwrap_or(label);
+                    (format!("key:{id}"), label.to_string())
+                }
+                None => ("key:unknown".to_string(), "Unknown".to_string()),
+            }
+        }
+    };
+
+    let mut groups: BTreeMap<String, (String, Vec<&Value>)> = BTreeMap::new();
+    for row in &choice.rows {
+        let Some(t) = row["event_time"].as_str().and_then(parse_time) else { continue };
+        if t < start || t >= end {
+            continue;
+        }
+        let (id, label) = group_of(row);
+        groups.entry(id).or_insert_with(|| (label, Vec::new())).1.push(row);
+    }
+
+    let mut rows: Vec<Value> = groups
+        .into_iter()
+        .map(|(id, (label, bucket))| {
+            let latest = bucket
+                .iter()
+                .filter_map(|r| r["event_time"].as_str())
+                .max()
+                .map(str::to_string);
+            json!({
+                "id": id,
+                "label": label,
+                "spend_micro": sum_or_none(bucket.iter().map(|r| r["cost_micro"].as_i64())),
+                "input_tokens": sum_or_none(bucket.iter().map(|r| r["input_tokens"].as_i64())),
+                "output_tokens": sum_or_none(bucket.iter().map(|r| r["output_tokens"].as_i64())),
+                "total_tokens": sum_or_none(bucket.iter().map(|r| r["total_tokens"].as_i64())),
+                "bucket_count": bucket.len(),
+                "latest": latest,
+            })
+        })
+        .collect();
+
+    // Largest spend first, then largest token count, so the interesting rows lead.
+    rows.sort_by(|a, b| {
+        let spend_a = a["spend_micro"].as_i64().unwrap_or(0);
+        let spend_b = b["spend_micro"].as_i64().unwrap_or(0);
+        if spend_a != spend_b {
+            return spend_b.cmp(&spend_a);
+        }
+        let tokens_a = a["total_tokens"].as_i64().unwrap_or(0);
+        let tokens_b = b["total_tokens"].as_i64().unwrap_or(0);
+        tokens_b.cmp(&tokens_a)
+    });
+
+    json!({
+        "group_by": group_by,
+        "rows": rows,
+        "granularity_ms": granularity_ms,
+        "incomplete": false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,8 +571,17 @@ mod tests {
         let rows = vec![
             aggregate_row(now - 5 * MINUTE, 40),
             aggregate_row(now - 15 * MINUTE, 25),
-            aggregate_row(now - 2 * HOUR, 300),
+            json!({
+                "event_time": format_time(now - 2 * HOUR),
+                "cost_micro": 1_000_000,
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "total_tokens": 15,
+                "request_count": 300,
+                "source": "openrouter.analytics.hour",
+            }),
         ];
+        let ranges = recorded_ranges(now);
         let inputs = WindowInputs {
             now,
             requests: &rows,
@@ -408,7 +589,7 @@ mod tests {
             collection_started_at: None,
             gaps: &[],
             retention_horizon: None,
-            collection_ranges: &[],
+            collection_ranges: &ranges,
         };
         let cells = compute_windows(&inputs);
         let one_hour = cells.iter().find(|c| c["key"] == "1h").unwrap();
@@ -441,6 +622,41 @@ mod tests {
                 "source": "openrouter.analytics.minute",
             }),
         ];
+        let ranges = recorded_ranges(now);
+        let inputs = WindowInputs {
+            now,
+            requests: &rows,
+            source_granularity_ms: MINUTE,
+            collection_started_at: None,
+            gaps: &[],
+            retention_horizon: None,
+            collection_ranges: &ranges,
+        };
+        let cells = compute_windows(&inputs);
+        let one_hour = cells.iter().find(|c| c["key"] == "1h").unwrap();
+        assert_eq!(one_hour["request_count"], Value::Null);
+    }
+
+    #[test]
+    fn a_leading_aligned_bin_does_not_count_spend_before_the_window() {
+        let now = 1_760_000_000_000;
+        let (start, _, bins) = trailing_window_bins("24h", now);
+        let first = bins[0];
+        assert!(first.0 < start, "alignment reaches before the window");
+        let rows = vec![
+            json!({
+                "event_time": format_time(first.0),
+                "cost_micro": 9_000_000,
+                "request_count": 1,
+                "source": "test",
+            }),
+            json!({
+                "event_time": format_time(start),
+                "cost_micro": 1_000_000,
+                "request_count": 1,
+                "source": "test",
+            }),
+        ];
         let inputs = WindowInputs {
             now,
             requests: &rows,
@@ -451,7 +667,118 @@ mod tests {
             collection_ranges: &[],
         };
         let cells = compute_windows(&inputs);
-        let one_hour = cells.iter().find(|c| c["key"] == "1h").unwrap();
-        assert_eq!(one_hour["request_count"], Value::Null);
+        let day = cells.iter().find(|c| c["key"] == "24h").unwrap();
+        assert_eq!(day["spend_micro"], 1_000_000);
+    }
+
+    #[test]
+    fn a_24h_window_includes_the_current_hour_of_minute_rows() {
+        let now = 1_760_000_000_000;
+        let ranges = recorded_ranges(now);
+        let rows = vec![
+            json!({
+                "event_time": format_time(now - 5 * MINUTE),
+                "cost_micro": 500_000,
+                "request_count": 2,
+                "source": "openrouter.analytics.minute",
+            }),
+            json!({
+                "event_time": format_time(now - 5 * HOUR),
+                "cost_micro": 1_000_000,
+                "request_count": 10,
+                "source": "openrouter.analytics.hour",
+            }),
+        ];
+        let inputs = WindowInputs {
+            now,
+            requests: &rows,
+            source_granularity_ms: MINUTE,
+            collection_started_at: None,
+            gaps: &[],
+            retention_horizon: None,
+            collection_ranges: &ranges,
+        };
+        let cells = compute_windows(&inputs);
+        let day = cells.iter().find(|c| c["key"] == "24h").unwrap();
+        assert_eq!(day["spend_micro"], 1_500_000);
+        assert_eq!(day["request_count"], 12);
+    }
+
+    fn breakdown_row(event_time: i64, model: &str, key: &str, tokens: i64, cost: i64) -> Value {
+        json!({
+            "event_time": format_time(event_time),
+            "model": model,
+            "key_id": key,
+            "key_name": key,
+            "cost_micro": cost,
+            "input_tokens": tokens / 2,
+            "output_tokens": tokens / 2,
+            "total_tokens": tokens,
+            "request_count": 1,
+            "source": "openrouter.analytics.minute",
+        })
+    }
+
+    /// The ranges the collector records, so a window is answerable even where a
+    /// bucket produced no row.
+    fn recorded_ranges(now: i64) -> Vec<(i64, i64, i64)> {
+        vec![
+            (MINUTE, now - 2 * HOUR, now),
+            (HOUR, now - DAY, now),
+            (DAY, now - 30 * DAY, now),
+        ]
+    }
+
+    #[test]
+    fn a_breakdown_groups_by_model_and_sums_one_granularity() {
+        let now = 1_760_000_000_000;
+        let rows = vec![
+            breakdown_row(now - 50 * MINUTE, "model-a", "key-1", 100, 2_000_000),
+            breakdown_row(now - 5 * MINUTE, "model-a", "key-2", 50, 1_000_000),
+            breakdown_row(now - 7 * MINUTE, "model-b", "key-1", 10, 500_000),
+            // A day row covering the same period must not be added on top.
+            json!({
+                "event_time": format_time(now - 5 * HOUR),
+                "model": "model-a",
+                "cost_micro": 9_000_000,
+                "total_tokens": 900,
+                "source": "openrouter.analytics.day",
+            }),
+        ];
+        let result = build_breakdown(&rows, now - HOUR, now, "model", &recorded_ranges(now));
+        let out = result["rows"].as_array().unwrap();
+        assert_eq!(out.len(), 2, "two models");
+        assert_eq!(out[0]["label"], "model-a", "largest spend leads");
+        assert_eq!(out[0]["total_tokens"], 150);
+        assert_eq!(out[0]["spend_micro"], 3_000_000);
+        assert_eq!(out[0]["bucket_count"], 2);
+        assert_eq!(out[1]["label"], "model-b");
+    }
+
+    #[test]
+    fn a_breakdown_groups_by_key_and_keeps_the_display_name() {
+        let now = 1_760_000_000_000;
+        let rows = vec![
+            breakdown_row(now - 50 * MINUTE, "model-a", "VScode M1", 100, 2_000_000),
+            breakdown_row(now - 5 * MINUTE, "model-b", "VScode M1", 50, 1_000_000),
+            breakdown_row(now - 7 * MINUTE, "model-a", "Strix M5", 10, 500_000),
+        ];
+        let result = build_breakdown(&rows, now - HOUR, now, "key", &recorded_ranges(now));
+        let out = result["rows"].as_array().unwrap();
+        assert_eq!(out.len(), 2, "two keys");
+        assert_eq!(out[0]["label"], "VScode M1");
+        assert_eq!(out[0]["total_tokens"], 150);
+        assert_eq!(out[0]["spend_micro"], 3_000_000);
+    }
+
+    #[test]
+    fn a_breakdown_with_no_rows_is_incomplete() {
+        // Nothing stored means the period cannot be answered at all, so the tab
+        // must say so rather than render an empty table that reads as "no
+        // usage".
+        let now = 1_760_000_000_000;
+        let result = build_breakdown(&[], now - 10 * MINUTE, now, "model", &[]);
+        assert_eq!(result["incomplete"], true);
+        assert_eq!(result["rows"].as_array().unwrap().len(), 0);
     }
 }

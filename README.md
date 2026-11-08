@@ -9,7 +9,7 @@ WebKit view, so there is no browser runtime to ship — the DMG is under 3 MB.
 This is the macOS build. The same source targets Windows and Linux; see
 [Platform notes](#platform-notes).
 
-![Spending tab at 520 x 420](docs/images/spending-standard.png)
+![Spending tab at 480 x 360](docs/images/spending-standard.png)
 
 ## Screenshots
 
@@ -21,8 +21,10 @@ This is the macOS build. The same source targets Windows and Linux; see
 | ![Settings](docs/images/settings.png) | ![Settings display group](docs/images/settings-display.png) |
 | ![Log group](docs/images/log.png) | ![Chart](docs/images/charts.png) |
 
-All screenshots are rendered from the built-in sample data, so no real account
-figures appear in them.
+Every screenshot is rendered by `npm run capture` from the running app, so they
+always match the shipped build. They are captured against a live account, which
+is why the figures are real; the sample data the app starts with is clearly
+labelled `Sample data` in the title bar.
 
 ## Download the macOS app
 
@@ -57,6 +59,22 @@ npm start
 `npm start` builds and launches the widget. On first launch it appears in the
 top-right of the primary display at 320 x 240, above normal windows, with a menu
 bar item and no Dock icon.
+
+### Headline/chip animation test page
+
+The renderer build also includes a standalone animation lab at:
+
+- `dist/renderer/delta-lab.html`
+
+It shows three side-by-side roll variants (all non-bouncy), each with the same
+event stream:
+
+- upward deltas from new usage
+- downward deltas from interval recalculation/corrections
+- chip flash on arrival, then fade over 5 seconds
+
+Use **Next event**, **Random event**, or **Autoplay** to compare variants and pick
+the one you prefer.
 
 ## Connect an OpenRouter account
 
@@ -100,13 +118,41 @@ trailing and overlapping, never additive. `24h` is a trailing 24 hours, not the
 calendar day.
 
 The cells double as range buttons. Selecting one highlights it and redraws the
-headline and chart for that interval.
+headline and chart for that interval. Switching interval repaints the headline
+rather than rolling it: a different interval is a different measurement, not a
+change in the same one, so the odometer only animates when the same interval's
+total moves.
+
+When the selected interval's total rises, the headline's digits roll to the new
+value and a chip appears beneath it reading `↑ $0.004000` with the requests that
+arrived with the change. A fall reads `↓ … Recalculated`, because a headline that
+drops is a correction to a figure already shown rather than new usage. Both the
+chip's lifetime and the roll's duration scale with `parameters.refresh_sec` so the
+chip covers a whole refresh cycle at any interval, and the roll always finishes
+before the next change lands.
+
+Headline spend is stated to three decimals below \$1,000 (`$4.835`) rather than the
+two the strip uses, so a rise of a tenth of a cent is visible. Strip cells keep the
+tighter form to fit their width.
 
 A window is shown only when it can be computed honestly. If the finest source
 granularity is coarser than a quarter of the window, the cell reads `–` with
 reason `source_granularity` rather than an interpolated guess. Missing is never
 rendered as zero. A cell marked `~` has partial coverage, for example because
 collection started inside the window.
+
+### Keys and Models
+
+Both tabs are a breakdown of the same aggregates the charts use, grouped by API
+key or by model. They are not a request log: OpenRouter reports aggregates, so a
+row is a bucket, and the row's subtitle says how many buckets it covers.
+
+Each breakdown picks exactly one granularity for the selected interval, the same
+one the chart uses, so the totals agree. Coverage is proved from the recorded
+fetch ranges rather than from the rows, because an idle hour produces no row —
+which means zero spend, not missing data. The Keys tab lists every configured key,
+including those with no usage in the interval, which read `no usage in this
+interval` rather than `$0.00`.
 
 ### Time axis
 
@@ -119,6 +165,34 @@ x(t) = (t - t_start) / (t_end - t_start)
 
 The axis is a rendering choice only; it does not change period selection, bin
 boundaries, or totals.
+
+### Live panning
+
+A live chart does not sit still between refreshes. `t_end` is the clock, not the
+moment the data was fetched, and the plot is repainted every animation frame:
+
+```
+t_end   = max(period_end, now)
+t_start = t_end - (period_end - period_start)
+```
+
+So the window advances exactly one screen-span per span of wall clock — a 10-minute
+chart moves one minute of axis every minute, and a 24-hour chart moves one hour
+every hour. Because `t_end` tracks `now`, the movement is continuous rather than
+one step per refresh, and the period label above the plot is computed from the same
+two instants so it never names a window that has already scrolled away.
+
+Two consequences are deliberate:
+
+* The axis does not clamp. A bucket that slides past the left edge leaves the plot
+  instead of pinning to it and reading as the newest value. Bars are clipped to the
+  plot rectangle so they cannot paint over the value gutter, and hit-testing uses
+  that same rectangle, so the tooltip names the bar actually under the pointer.
+* Paging back stops the pan. The previous-period button pins the chart to the
+  fetched window; paging forward to the live edge resumes following the clock.
+
+The pan is a redraw loop, so an idle live chart still repaints about sixty times a
+second. It stops the moment the chart is pinned, hidden, or destroyed.
 
 ### Resizing
 
@@ -140,6 +214,31 @@ The chart appears whenever there is room for a legible plot: always in Expanded,
 and in Standard only above 280 px of height. Below that the chart is hidden rather
 than squeezed under its legibility floor.
 
+The strip cells degrade the same way. Each cell needs 58 px of content width to
+show its value and 132 px to also show the request count, so at 320 px wide the
+five cells are label-only and the headline carries the number instead. Nothing is
+truncated to fit.
+
+### Moving the window
+
+Drag anywhere on the status bar. The bar carries `-webkit-app-region: drag`, but a
+frameless window does not reliably honour the native drag hit test, so the
+renderer also drives the move from script: on `pointerdown` it waits 90 ms for the
+platform to take the press, and if the window origin has not changed it takes over
+and sends one `window:moveBy` delta per `pointermove`. A press the platform *is*
+handling ends the script, so the window never moves twice.
+
+### Appearance
+
+The window is opaque: `transparent: false` in `tauri.conf.json`, and every surface
+in `app.css` is a solid colour rather than a translucent tint over a
+`backdrop-filter`. The chart area pans continuously while it is live — see
+[The chart](#the-chart) — which would read as a shimmer through a blurred
+backdrop, and a solid panel is what the macOS widget idiom expects anyway.
+
+Set `display.theme` in Settings to switch between the light and dark palettes; both
+are fully opaque.
+
 ## Keyboard
 
 | Key | Action |
@@ -159,9 +258,9 @@ Show or hide, always-on-top toggle, ghost mode, refresh now, open settings, quit
 ```bash
 npm run build      # bundle the UI into dist/renderer
 npm run typecheck  # tsc --noEmit
-npm test           # 137 unit tests for accounting, time, axis, layout, redaction
+npm test           # 142 unit tests for accounting, time, axis, layout, redaction
 npm run dev        # build the UI and launch the app
-npm run capture    # render each size class to PNG for review
+npm run capture    # render the README screenshots into docs/images
 npm run dist:mac   # build a distributable DMG
 ```
 
@@ -172,8 +271,16 @@ global `cargo install tauri-cli` is needed.
 The Rust side has its own suite:
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml   # 39 tests
 ```
+
+`npm run capture` builds the release app and runs it with `--capture`, which
+drives the UI through every tab and writes the eleven PNGs the README embeds
+straight into `docs/images/`. It reads the window's own buffer
+(`cacheDisplayInRect_toBitmapImageRep`) rather than taking a screen grab, so it
+works whether or not the window is frontmost and never pulls in whatever happens
+to be behind it. Re-run it after any UI change so the screenshots cannot drift
+from the build.
 
 ### Bundle size
 

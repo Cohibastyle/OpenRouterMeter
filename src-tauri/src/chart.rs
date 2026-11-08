@@ -6,31 +6,10 @@
 
 use serde_json::{json, Value};
 
-use crate::accounting::{format_time, parse_time, select_granularity, sum_or_none, MINUTE};
-
-const HOUR: i64 = 60 * MINUTE;
-
-/// Bin width per range, chosen so each range has a readable number of bars and
-/// never gets finer than the granularity the collector retains.
-fn bin_ms(scale: &str) -> i64 {
-    match scale {
-        "10m" => MINUTE,
-        "1h" => 5 * MINUTE,
-        "3h" => 15 * MINUTE,
-        "6h" => 30 * MINUTE,
-        _ => HOUR,
-    }
-}
-
-fn range_ms(scale: &str) -> i64 {
-    match scale {
-        "10m" => 10 * MINUTE,
-        "1h" => 60 * MINUTE,
-        "3h" => 3 * HOUR,
-        "6h" => 6 * HOUR,
-        _ => 24 * HOUR,
-    }
-}
+use crate::accounting::{
+    clipped_bin_interval, format_time, in_half_open_range, parse_time, select_granularity,
+    sum_or_none, trailing_window_bins,
+};
 
 pub struct ChartRequest<'a> {
     pub metric: String,
@@ -44,10 +23,7 @@ pub struct ChartRequest<'a> {
 }
 
 pub fn build_chart(req: &ChartRequest<'_>) -> Value {
-    let span = range_ms(&req.scale);
-    let width = bin_ms(&req.scale);
-    let end = req.anchor;
-    let start = end - span;
+    let (start, end, period_bins) = trailing_window_bins(&req.scale, req.anchor);
 
     // The right edge is the current time for the current period and the period
     // end for a past period. It is never in the future.
@@ -58,20 +34,34 @@ pub fn build_chart(req: &ChartRequest<'_>) -> Value {
     let mut total_input = 0i64;
     let mut total_output = 0i64;
 
-    // Align the first bin down to a bin boundary so bars are stable as time moves.
-    let mut t = (start as f64 / width as f64).floor() as i64 * width;
-    while t < end {
-        let bin_start = t;
-        let bin_end = t + width;
-        t += width;
-
+    for (bin_start, bin_end) in period_bins {
         // A bin that has not started yet is not data; drawing it would pile
-        // every future bin onto the right edge of the log axis.
+        // every future bin onto the right edge of the axis.
         if bin_start >= axis_end {
             continue;
         }
 
-        let choice = select_granularity(req.requests, bin_start, bin_end, width, req.collection_ranges);
+        let Some((lo, hi)) = clipped_bin_interval(bin_start, bin_end, start, axis_end) else {
+            bins.push(json!({
+                "start": format_time(bin_start),
+                "end": format_time(bin_end),
+                "spend_micro": Value::Null,
+                "input_tokens": Value::Null,
+                "output_tokens": Value::Null,
+                "total_tokens": Value::Null,
+                "request_count": Value::Null,
+                "partial": bin_end > req.now,
+                "missing": true,
+            }));
+            continue;
+        };
+        let choice = select_granularity(
+            req.requests,
+            lo,
+            hi,
+            bin_end - bin_start,
+            req.collection_ranges,
+        );
         let in_bin: Vec<&Value> = choice
             .rows
             .iter()
@@ -79,7 +69,7 @@ pub fn build_chart(req: &ChartRequest<'_>) -> Value {
                 r["event_time"]
                     .as_str()
                     .and_then(parse_time)
-                    .map(|ts| ts >= bin_start && ts < bin_end)
+                    .map(|ts| in_half_open_range(ts, lo, hi))
                     .unwrap_or(false)
             })
             .collect();
@@ -88,6 +78,8 @@ pub fn build_chart(req: &ChartRequest<'_>) -> Value {
         let spend = if missing { None } else { sum_or_none(in_bin.iter().map(|r| r["cost_micro"].as_i64())) };
         let input = if missing { None } else { sum_or_none(in_bin.iter().map(|r| r["input_tokens"].as_i64())) };
         let output = if missing { None } else { sum_or_none(in_bin.iter().map(|r| r["output_tokens"].as_i64())) };
+        let total = if missing { None } else { sum_or_none(in_bin.iter().map(|r| r["total_tokens"].as_i64())) };
+        let requests = if missing { None } else { sum_or_none(in_bin.iter().map(|r| r["request_count"].as_i64())) };
 
         total_spend += spend.unwrap_or(0);
         total_input += input.unwrap_or(0);
@@ -95,10 +87,12 @@ pub fn build_chart(req: &ChartRequest<'_>) -> Value {
 
         bins.push(json!({
             "start": format_time(bin_start),
-            "end": format_time(bin_end.min(axis_end)),
+            "end": format_time(bin_end),
             "spend_micro": spend,
             "input_tokens": input,
             "output_tokens": output,
+            "total_tokens": total,
+            "request_count": requests,
             "partial": bin_end > req.now,
             "missing": missing,
         }));
@@ -124,11 +118,11 @@ mod tests {
 
     #[test]
     fn bin_widths_match_the_typescript_table() {
-        assert_eq!(bin_ms("10m"), MINUTE);
-        assert_eq!(bin_ms("1h"), 5 * MINUTE);
-        assert_eq!(bin_ms("3h"), 15 * MINUTE);
-        assert_eq!(bin_ms("6h"), 30 * MINUTE);
-        assert_eq!(bin_ms("24h"), HOUR);
+        assert_eq!(crate::accounting::chart_bin_ms("10m"), crate::accounting::MINUTE);
+        assert_eq!(crate::accounting::chart_bin_ms("1h"), 5 * crate::accounting::MINUTE);
+        assert_eq!(crate::accounting::chart_bin_ms("3h"), 15 * crate::accounting::MINUTE);
+        assert_eq!(crate::accounting::chart_bin_ms("6h"), 30 * crate::accounting::MINUTE);
+        assert_eq!(crate::accounting::chart_bin_ms("24h"), crate::accounting::HOUR);
     }
 
     #[test]
@@ -166,5 +160,55 @@ mod tests {
         let bins = chart["bins"].as_array().unwrap();
         assert!(!bins.is_empty());
         assert!(bins.len() < 12, "future bins were drawn: {}", bins.len());
+    }
+
+    #[test]
+    fn the_current_bin_keeps_its_full_end() {
+        let now = 1_760_000_000_123;
+        let chart = build_chart(&ChartRequest {
+            metric: "spend".into(),
+            scale: "10m".into(),
+            anchor: now,
+            axis: "log".into(),
+            requests: &[],
+            collection_ranges: &[],
+            sample: true,
+            now,
+        });
+        let bins = chart["bins"].as_array().unwrap();
+        let last = bins.last().unwrap();
+        let end = crate::accounting::parse_time(last["end"].as_str().unwrap()).unwrap();
+        assert!(end > now, "end is the nominal bucket so live width can follow the clock");
+        assert_eq!(last["partial"], true);
+    }
+
+    #[test]
+    fn spend_before_the_window_is_clipped_out_of_the_first_bin() {
+        let now = 1_760_000_000_000;
+        let (start, _, bins) = crate::accounting::trailing_window_bins("24h", now);
+        let first = bins[0];
+        let rows = vec![
+            serde_json::json!({
+                "event_time": crate::accounting::format_time(first.0),
+                "cost_micro": 9_000_000,
+                "source": "test",
+            }),
+            serde_json::json!({
+                "event_time": crate::accounting::format_time(start),
+                "cost_micro": 1_000_000,
+                "source": "test",
+            }),
+        ];
+        let chart = build_chart(&ChartRequest {
+            metric: "spend".into(),
+            scale: "24h".into(),
+            anchor: now,
+            axis: "log".into(),
+            requests: &rows,
+            collection_ranges: &[],
+            sample: false,
+            now,
+        });
+        assert_eq!(chart["total_spend_micro"], 1_000_000);
     }
 }

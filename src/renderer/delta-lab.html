@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Headline Delta Animation Lab</title>
+    <link rel="stylesheet" href="styles/delta-lab.css" />
+  </head>
+  <body>
+    <main class="lab" id="lab">
+      <header class="lab-header">
+        <h1>Headline Delta Animation Lab</h1>
+        <p>Three non-bouncy roll variants with chip-first hold 3s, then 5s fade-out.</p>
+      </header>
+      <section class="controls">
+        <button id="btn-next" type="button">Next event</button>
+        <button id="btn-random" type="button">Random event</button>
+        <button id="btn-autoplay" type="button" aria-pressed="false">Autoplay: Off</button>
+      </section>
+      <section class="cards" id="cards"></section>
+    </main>
+    <script src="delta-lab.js"></script>
+  </body>
+</html>

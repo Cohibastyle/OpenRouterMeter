@@ -184,3 +184,35 @@ test('every chart scale produces at least three labelled ticks', () => {
     assert.ok(labelled.length >= 3, `${name} produced only ${labelled.length} labelled ticks`);
   }
 });
+
+test('a live axis advances one period per period of wall clock', () => {
+  // The headline requirement: a ten-minute chart must pan one minute of axis per
+  // minute of wall clock, so the axis is anchored to the clock rather than to the
+  // instant the data was fetched.
+  const fetched = new Date(2026, 10, 6, 12, 0, 0).getTime();
+  const span = 10 * MINUTE;
+  const later = fetched + 5 * MINUTE; // five minutes of wall clock elapsed
+  const axis = createTimeAxis(later - span, later, { clamp: false });
+
+  assert.equal(axis.tEnd, later, 'the right edge sits at the clock');
+  assert.equal(axis.tEnd - axis.tStart, span, 'the window keeps its full width');
+
+  // The instant that was at the right edge has travelled half way left.
+  const pos = axis.positionOf(fetched);
+  assert.ok(Math.abs(pos - 0.5) < 1e-9, `expected 0.5, got ${pos}`);
+});
+
+test('an unclamped axis lets a stale bucket leave the plot', () => {
+  const fetched = new Date(2026, 10, 6, 12, 0, 0).getTime();
+  const span = 10 * MINUTE;
+  const later = fetched + 20 * MINUTE;
+  const axis = createTimeAxis(later - span, later, { clamp: false });
+
+  // The oldest bucket is now two spans behind the window, so it maps well past
+  // the left edge instead of pinning to it and reading as the newest value.
+  assert.ok(axis.positionOf(fetched - span) < -1, 'a stale bucket must exit the plot');
+
+  // Clamping stays the default so a static chart keeps every bar inside the plot.
+  const clamped = createTimeAxis(later - span, later);
+  assert.equal(clamped.positionOf(fetched - span), 0);
+});

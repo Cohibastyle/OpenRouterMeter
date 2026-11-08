@@ -196,6 +196,8 @@ export interface ChartBin {
   spend_micro: number | null;
   input_tokens: number | null;
   output_tokens: number | null;
+  total_tokens: number | null;
+  request_count: number | null;
   partial: boolean;
   missing: boolean;
 }
@@ -217,6 +219,7 @@ export interface WindowState {
   display_id: number | null;
   always_on_top: 'normal' | 'stronger' | 'off';
   opacity: number;
+  native_opacity?: boolean;
   ghost: boolean;
   locked: boolean;
   visible: boolean;

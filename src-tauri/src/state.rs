@@ -12,7 +12,6 @@ use crate::credentials::CredentialStore;
 use crate::db::Db;
 use crate::logging::Logger;
 
-const SNAPSHOT: &str = include_str!("../fixtures/snapshot.json");
 const REQUESTS: &str = include_str!("../fixtures/requests.json");
 const KEYS: &str = include_str!("../fixtures/keys.json");
 const SETTINGS: &str = include_str!("../fixtures/settings.json");
@@ -30,11 +29,8 @@ pub struct AppState {
 impl AppState {
     pub fn new() -> Self {
         let mut fixtures = HashMap::new();
-        fixtures.insert("snapshot", serde_json::from_str(SNAPSHOT).unwrap_or(Value::Null));
         fixtures.insert("requests", serde_json::from_str(REQUESTS).unwrap_or(Value::Null));
         fixtures.insert("keys", serde_json::from_str(KEYS).unwrap_or(Value::Null));
-        fixtures.insert("chart", empty_chart());
-        fixtures.insert("breakdown", json!({ "group_by": "model", "rows": [], "total_micro": 0 }));
 
         let data_dir = data_dir();
         let db = match Db::open(&data_dir) {
@@ -223,6 +219,15 @@ impl AppState {
                     let rows = result["rows"].as_array().cloned().unwrap_or_default();
                     let requests = analytics_to_requests(&rows, granularity, &key_names);
                     written += self.store_requests(&requests);
+                    // Record what this fetch actually covered. Rows alone cannot
+                    // prove coverage, because an hour with no activity produces
+                    // no row, so a window reaching into it would look uncovered.
+                    let granularity_ms = match granularity {
+                        "minute" => crate::accounting::MINUTE,
+                        "hour" => crate::accounting::HOUR,
+                        _ => crate::accounting::DAY,
+                    };
+                    self.record_range(granularity_ms, &start, &end);
                 }
             }
         } else if caps["activity"].as_bool().unwrap_or(false) {
@@ -284,6 +289,26 @@ impl AppState {
         }
     }
 
+    fn record_range(&self, granularity_ms: i64, start: &str, end: &str) {
+        if let Ok(mut guard) = self.db.lock() {
+            if let Some(db) = guard.as_mut() {
+                let _ = db.record_collection_range(
+                    granularity_ms,
+                    start,
+                    end,
+                    &crate::accounting::format_time(now_ms()),
+                );
+            }
+        }
+    }
+
+    fn collection_ranges(&self) -> Vec<(i64, i64, i64)> {
+        match self.db.lock() {
+            Ok(guard) => guard.as_ref().map(|db| db.collection_ranges()).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        }
+    }
+
     fn store_keys(&self, rows: &[Value]) {
         if let Ok(mut guard) = self.db.lock() {
             if let Some(db) = guard.as_mut() {
@@ -307,6 +332,7 @@ impl AppState {
 
         let sample = self.has_sample_rows();
         let account = self.account_info();
+        let ranges = self.collection_ranges();
 
         let inputs = crate::snapshot::SnapshotInputs {
             now,
@@ -335,7 +361,7 @@ impl AppState {
             source_granularity_ms: 60_000,
             collection_started_at: None,
             gaps: &[],
-            collection_ranges: &[],
+            collection_ranges: &ranges,
             retention_horizon: None,
             time_zone: "UTC".to_string(),
             // The app reports in the user's zone, so the day and month
@@ -351,13 +377,22 @@ impl AppState {
     /// Build chart data from the stored rows for the requested range.
     pub fn live_chart(&self, params: &Value) -> Value {
         let now = now_ms();
-        let requests = self.all_requests();
+        let all = self.all_requests();
         let settings = self.settings();
+        let ranges = self.collection_ranges();
 
         let metric = params["metric"].as_str().unwrap_or("spend").to_string();
         let scale = params["scale"].as_str().unwrap_or("24h").to_string();
         let anchor = params["anchor"].as_i64().unwrap_or(now);
         let axis = settings["display"]["chart_axis"].as_str().unwrap_or("log").to_string();
+        let key_id = params["keyId"].as_str();
+        let requests: Vec<Value> = match key_id {
+            Some(id) => all
+                .into_iter()
+                .filter(|r| r["key_id"].as_str() == Some(id))
+                .collect(),
+            None => all,
+        };
 
         crate::chart::build_chart(&crate::chart::ChartRequest {
             metric,
@@ -365,7 +400,7 @@ impl AppState {
             anchor,
             axis,
             requests: &requests,
-            collection_ranges: &[],
+            collection_ranges: &ranges,
             sample: self.has_sample_rows(),
             now,
         })
@@ -427,6 +462,31 @@ impl AppState {
             Some(db) => Value::Array(db.list_keys()),
             None => Value::Array(Vec::new()),
         }
+    }
+
+    /// Group the stored rows for the Models and Keys tabs.
+    ///
+    /// The renderer asks for a trailing window in ms and, for the Models tab, an
+    /// optional key scope. The Keys tab always asks for every key, so a scoped
+    /// view does not collapse to the one key already selected.
+    pub fn breakdown(&self, params: &Value) -> Value {
+        let group_by = params["groupBy"].as_str().unwrap_or("model");
+        let window_ms = params["windowMs"].as_i64().unwrap_or(24 * 60 * 60 * 1000);
+        let key_id = params["keyId"].as_str();
+
+        let now = now_ms();
+        let start = now - window_ms;
+        let requests = self.all_requests();
+        let scoped: Vec<Value> = match key_id {
+            Some(id) => requests
+                .into_iter()
+                .filter(|r| r["key_id"].as_str() == Some(id))
+                .collect(),
+            None => requests,
+        };
+        let ranges = self.collection_ranges();
+
+        crate::accounting::build_breakdown(&scoped, start, now, group_by, &ranges)
     }
 
     pub fn stored_logs(&self, limit: usize) -> Value {
@@ -591,18 +651,6 @@ fn data_dir() -> PathBuf {
     std::env::var("HOME")
         .map(|h| PathBuf::from(format!("{h}/Library/Application Support/OpenRouter Meter")))
         .unwrap_or_else(|_| PathBuf::from("."))
-}
-
-fn empty_chart() -> Value {
-    json!({
-        "metric": "spend",
-        "scale": "24h",
-        "period_start": "",
-        "period_end": "",
-        "bins": [],
-        "finest_bin_ms": 3600000,
-        "partial": false,
-    })
 }
 
 fn default_settings() -> Value {

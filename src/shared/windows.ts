@@ -1,6 +1,7 @@
+import { buildChart } from './chart.js';
 import { WINDOWS } from './constants.js';
 import { sumIntOrNull, sumMicroOrNull } from './money.js';
-import { selectGranularity, type CollectionRange } from './granularity.js';
+import type { CollectionRange } from './granularity.js';
 import type {
   Coverage,
   CoverageInfo,
@@ -56,40 +57,34 @@ export function computeWindows(inputs: WindowInputs): WindowCell[] {
       as_of: asOf,
     };
 
-    // Granularity gate: the finest source must be at most a quarter of the window.
-    if (inputs.sourceGranularityMs > w.ms / 4) {
+    // Granularity gate: the finest source must be at most the window width.
+    // The chart handles per-bin granularity selection, so a coarser source
+    // simply produces missing bins rather than an unavailable window.
+    if (inputs.sourceGranularityMs > w.ms) {
       return { ...base, coverage: 'unavailable', partial_reason: 'source_granularity' };
     }
 
-    // Sum one granularity only. The collector stores the same spend at minute,
-    // hour, and day granularity over overlapping ranges, so summing every row
-    // would count the same money two or three times. When no row declares a
-    // granularity, every row is used, which keeps fixture and sample data
-    // working.
-    // A granularity coarser than the window cannot resolve it, so the window
-    // size is the ceiling. The quarter rule above is the separate question of
-    // whether the source is fine enough to be worth showing at all.
-    const choice = selectGranularity(
-      inputs.requests,
-      windowStart,
-      windowEnd,
-      w.ms,
-      inputs.collectionRanges ?? [],
-    );
-    const source = choice.granularityMs === null ? inputs.requests : choice.rows;
-    const inWindow = source.filter((r) => {
-      const t = new Date(r.event_time).getTime();
-      return t > windowStart && t <= windowEnd;
+    // Sum the same bins the chart draws for this range. One granularity per
+    // bin, clipped to the trailing window, so the interval button, the headline,
+    // and the bars are the same number. A single granularity for the whole
+    // window dropped the current partial bin's minute rows whenever hour rows
+    // "covered" the range, which is why the buttons and the big number drifted.
+    const chart = buildChart({
+      metric: 'spend',
+      scale: w.key,
+      anchor: inputs.now,
+      timeZone: 'UTC',
+      weekStart: 'monday',
+      collectionRanges: inputs.collectionRanges ?? [],
+      requests: inputs.requests,
+      sample: false,
+      now: inputs.now,
     });
-
-    const spend = sumMicroOrNull(inWindow.map((r) => r.cost_micro));
-    const input = sumIntOrNull(inWindow.map((r) => r.input_tokens));
-    const output = sumIntOrNull(inWindow.map((r) => r.output_tokens));
-    const total = sumIntOrNull(inWindow.map((r) => r.total_tokens));
-    // The source's own count, not the number of rows: a row is an aggregate, so
-    // counting rows undercounts and makes the figure depend on which
-    // granularity the window selected.
-    const requests = sumIntOrNull(inWindow.map((r) => r.request_count));
+    const spend = sumMicroOrNull(chart.bins.map((b) => b.spend_micro));
+    const input = sumIntOrNull(chart.bins.map((b) => b.input_tokens));
+    const output = sumIntOrNull(chart.bins.map((b) => b.output_tokens));
+    const total = sumIntOrNull(chart.bins.map((b) => b.total_tokens));
+    const requests = sumIntOrNull(chart.bins.map((b) => b.request_count));
 
     const reason = partialReasonFor(windowStart, inputs);
     const coverage: Coverage = reason ? 'partial' : 'full';

@@ -1,8 +1,11 @@
 :root {
   --bg: #0d1117;
-  --panel: rgba(22, 27, 34, 0.86);
+  /* The window is opaque, so every surface must be too: a translucent panel
+     over an opaque window shows the window's own background through it rather
+     than the desktop, which reads as a washed-out tint rather than depth. */
+  --panel: #161b22;
   --panel-solid: #161b22;
-  --panel-raised: rgba(33, 38, 45, 0.92);
+  --panel-raised: #21262d;
   --border: rgba(240, 246, 252, 0.1);
   --border-strong: rgba(240, 246, 252, 0.18);
   --text: #e6edf3;
@@ -33,9 +36,9 @@
 
 :root[data-theme='light'] {
   --bg: #f6f8fa;
-  --panel: rgba(255, 255, 255, 0.9);
+  --panel: #ffffff;
   --panel-solid: #ffffff;
-  --panel-raised: rgba(246, 248, 250, 0.96);
+  --panel-raised: #f6f8fa;
   --border: rgba(31, 35, 40, 0.12);
   --border-strong: rgba(31, 35, 40, 0.22);
   --text: #1f2328;
@@ -126,7 +129,9 @@ html,
 body {
   height: 100%;
   overflow: hidden;
-  background: transparent;
+  /* Opaque, matching the window: a transparent page over an opaque window would
+     leave the corners of the rounded shell showing the raw window background. */
+  background: var(--bg);
   font-family: var(--font);
   color: var(--text);
   font-size: var(--fs-md);
@@ -151,7 +156,6 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
-  backdrop-filter: blur(18px) saturate(140%);
 }
 
 .root[data-mode='micro'] .shell {
@@ -168,7 +172,12 @@ body {
   min-height: 26px;
   padding: 0 4px 0 var(--pad);
   border-bottom: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.16);
+  /* A solid shade of the panel rather than a translucent black: over an opaque
+     window a wash of black is just a darker panel, and naming it as a mix keeps
+     the two themes consistent. The plain fallback precedes the mix so an engine
+     without `color-mix` still gets an opaque bar. */
+  background: var(--panel-solid);
+  background: color-mix(in srgb, var(--panel) 88%, #000);
   -webkit-app-region: drag;
   cursor: default;
   user-select: none;
@@ -195,7 +204,10 @@ body {
 }
 
 :root[data-theme='light'] .statusbar {
-  background: rgba(0, 0, 0, 0.03);
+  /* The dark mix would tint a white panel grey, so the light theme darkens by a
+     smaller share and stays a faint band. */
+  background: var(--panel-solid);
+  background: color-mix(in srgb, var(--panel) 96%, #000);
 }
 
 .root[data-mode='micro'] .statusbar {
@@ -511,7 +523,7 @@ body {
 
 .cell:hover {
   border-color: var(--border-strong);
-  background: rgba(48, 54, 61, 0.9);
+  background: var(--panel-raised);
 }
 
 /*
@@ -996,17 +1008,21 @@ body {
 .tabbar {
   display: flex;
   align-items: stretch;
-  gap: 1px;
+  gap: 2px;
   height: 30px;
   min-height: 30px;
   padding: 0 3px;
   border-top: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.2);
+  /* A shade of the panel rather than translucent black, so the bar reads the
+     same over an opaque window as it did over a blurred backing. */
+  background: var(--panel-solid);
+  background: color-mix(in srgb, var(--panel) 92%, #000);
   flex: 0 0 auto;
 }
 
 :root[data-theme='light'] .tabbar {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--panel-solid);
+  background: color-mix(in srgb, var(--panel) 96%, #000);
 }
 
 .root[data-mode='micro'] .tabbar {
@@ -1215,6 +1231,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* The table is the view's only growing child, so it must be allowed to
+     shrink below its content or the list inside it can never scroll. */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .breakdown-head {
@@ -1227,6 +1247,8 @@ body {
   color: var(--text-faint);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  /* The header stays put while the rows scroll under it. */
+  flex: 0 0 auto;
 }
 
 .bh-tokens,

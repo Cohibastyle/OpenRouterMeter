@@ -39,6 +39,17 @@ await build({
   logLevel: 'info',
 });
 
+// 2b. Standalone animation lab for headline + chip behavior testing.
+await build({
+  entryPoints: [join(root, 'src/renderer/delta-lab.ts')],
+  outfile: join(out, 'delta-lab.js'),
+  bundle: true,
+  platform: 'browser',
+  target: 'safari15',
+  format: 'iife',
+  logLevel: 'info',
+});
+
 await cp(join(root, 'src/renderer/styles'), join(out, 'styles'), { recursive: true });
 
 // 3. The HTML, with the bridge prelude inserted before the renderer script.
@@ -49,5 +60,6 @@ const withBridge = html.replace(
   '<script src="bridge.js"></script>\n    <script src="index.js"></script>',
 );
 await (await import('node:fs/promises')).writeFile(join(out, 'index.html'), withBridge);
+await cp(join(root, 'src/renderer/delta-lab.html'), join(out, 'delta-lab.html'));
 
 console.log('\nTauri frontend built -> dist/renderer');

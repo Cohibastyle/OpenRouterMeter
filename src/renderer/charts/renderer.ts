@@ -5,12 +5,27 @@ import {
   hitTest,
   type TimeAxis,
 } from '../../shared/timeAxis.js';
+import { barGrowthFrame, planBarGrowth, BAR_SOLID_MS, type BarGrowth } from '../../shared/barGrowth.js';
 import { formatAge, formatAxisValue, formatSpend, formatTokensCompact } from '../../shared/format.js';
 import type { ChartData } from '../../shared/types.js';
+import { motionAllowed } from '../components/odometer.js';
 
 export interface ChartOptions {
   metric: 'spend' | 'tokens';
   onBinClick?: (index: number) => void;
+  /**
+   * Whether the axis rides the clock instead of the fetched period.
+   *
+   * A live chart must pan continuously: a 10-minute chart moves one minute of x
+   * axis per minute, not one step per fetch. The window is therefore anchored to
+   * `Date.now()` and keeps the span the data was fetched with, so the axis slides
+   * smoothly between refreshes while the bars stay pinned to their own
+   * timestamps.
+   *
+   * A pinned chart is the exception. It shows a period the user deliberately
+   * paged back to, so its axis must stay where it is.
+   */
+  live: boolean;
 }
 
 interface RenderedBin {
@@ -53,6 +68,7 @@ const COLORS = {
   gridMinor: 'rgba(240,246,252,0.07)',
   label: '#6e7681',
   partial: 'rgba(251,191,36,0.55)',
+  growth: '#fbbf24',
   missing: 'rgba(240,246,252,0.06)',
   crosshair: 'rgba(240,246,252,0.35)',
 };
@@ -64,6 +80,7 @@ const COLORS = {
  * long that bucket was, so a bar can be read as a duration as well as a value.
  */
 export class ChartRenderer {
+  private host: HTMLElement;
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly tooltip: HTMLDivElement;
@@ -72,13 +89,47 @@ export class ChartRenderer {
   private axis: TimeAxis | null = null;
   private bins: RenderedBin[] = [];
   private hoverIndex = -1;
+  /**
+   * Where the pointer last was, in client coordinates, or null when it is away.
+   *
+   * Kept so the hovered bucket can be recomputed as the axis pans under a
+   * motionless pointer.
+   */
+  private pointer: { x: number; y: number } | null = null;
   private width = 0;
   private height = 0;
   private dpr = 1;
+  /**
+   * Where the plot area sits, in CSS pixels, as of the last frame.
+   *
+   * Hit-testing has to use the same geometry the bars were drawn with. Measuring
+   * the canvas instead put the pointer up to a gutter's width away from the bin
+   * under it — about 26 px at the left edge — so the tooltip named a bar the
+   * pointer was not over, and on a live chart the error grew as the axis panned.
+   */
+  private plotLeft = 0;
+  private plotWidth = 0;
   private observer: ResizeObserver | null = null;
   private rafId = 0;
+  /** The clock-driven repaint loop's handle, alive only while the chart is live. */
+  private panId = 0;
+  /**
+   * Rising overlays keyed by bin start.
+   *
+   * Kept across setData so a snapshot that only adds to the current bar grows
+   * from the previous top instead of jumping, and so a DOM rebuild that
+   * reattaches this canvas can resume the four-second solidify.
+   */
+  private growths = new Map<number, BarGrowth>();
+  /** Last drawn values, used to detect a rise on the next payload. */
+  private lastValues = new Map<number, number>();
+  /** Scale+metric identity; a change of question drops in-flight growth. */
+  private lastSeries = '';
+  /** Extra raf while a pinned chart still has an overlay to finish. */
+  private growthId = 0;
 
   constructor(container: HTMLElement, options: ChartOptions) {
+    this.host = container;
     this.options = options;
     this.canvas = document.createElement('canvas');
     this.canvas.className = 'chart-canvas';
@@ -105,22 +156,123 @@ export class ChartRenderer {
   }
 
   setData(data: ChartData): void {
+    this.syncGrowth(data);
     this.data = data;
+    this.scheduleRender();
+    this.syncPan();
+    this.syncGrowthLoop();
+  }
+
+  /**
+   * Move the canvas into a new host without dropping in-flight growth.
+   *
+   * The view is rebuilt on every snapshot. Destroying the renderer there is
+   * what froze the last bar until the user changed the time span: the new
+   * canvas painted the previous payload as a first frame, with no previous
+   * height to grow from.
+   */
+  reattach(container: HTMLElement): void {
+    if (this.host === container && this.canvas.parentElement === container) return;
+    this.host = container;
+    container.appendChild(this.canvas);
+    container.appendChild(this.tooltip);
+    this.observer?.disconnect();
+    this.observer = new ResizeObserver(() => this.scheduleRender());
+    this.observer.observe(container);
     this.scheduleRender();
   }
 
   setOptions(options: Partial<ChartOptions>): void {
     this.options = { ...this.options, ...options };
     this.scheduleRender();
+    this.syncPan();
   }
 
   destroy(): void {
     this.observer?.disconnect();
     this.observer = null;
     if (this.rafId) cancelAnimationFrame(this.rafId);
+    if (this.panId) cancelAnimationFrame(this.panId);
+    this.panId = 0;
+    if (this.growthId) cancelAnimationFrame(this.growthId);
+    this.growthId = 0;
     this.canvas.remove();
     this.tooltip.remove();
   }
+
+  private seriesKey(data: ChartData): string {
+    return `${data.metric}:${data.scale}`;
+  }
+
+  private binValue(data: ChartData, index: number): number {
+    const bin = data.bins[index];
+    if (!bin || bin.missing) return 0;
+    return this.options.metric === 'spend'
+      ? (bin.spend_micro ?? 0)
+      : (bin.input_tokens ?? 0) + (bin.output_tokens ?? 0);
+  }
+
+  private syncGrowth(data: ChartData): void {
+    const now = Date.now();
+    const series = this.seriesKey(data);
+    const animate = motionAllowed();
+    if (series !== this.lastSeries) {
+      this.growths.clear();
+      this.lastValues.clear();
+      this.lastSeries = series;
+      for (let i = 0; i < data.bins.length; i += 1) {
+        const start = new Date(data.bins[i]!.start).getTime();
+        this.lastValues.set(start, this.binValue(data, i));
+      }
+      return;
+    }
+
+    const nextValues = new Map<number, number>();
+    const nextGrowths = new Map<number, BarGrowth>();
+    for (let i = 0; i < data.bins.length; i += 1) {
+      const start = new Date(data.bins[i]!.start).getTime();
+      const value = this.binValue(data, i);
+      nextValues.set(start, value);
+      const planned = planBarGrowth(
+        this.lastValues.get(start),
+        value,
+        now,
+        this.growths.get(start),
+        animate,
+      );
+      if (planned) nextGrowths.set(start, planned);
+    }
+    this.lastValues = nextValues;
+    this.growths = nextGrowths;
+  }
+
+  private growthActive(): boolean {
+    const now = Date.now();
+    for (const growth of this.growths.values()) {
+      if (now - growth.startedAt < BAR_SOLID_MS) return true;
+    }
+    return false;
+  }
+
+  private syncGrowthLoop(): void {
+    const shouldRun = this.growthActive() && !this.options.live;
+    if (shouldRun && !this.growthId) {
+      this.growthId = requestAnimationFrame(this.growthTick);
+    } else if (!shouldRun && this.growthId) {
+      cancelAnimationFrame(this.growthId);
+      this.growthId = 0;
+    }
+  }
+
+  private readonly growthTick = (): void => {
+    if (!this.growthActive()) {
+      this.growthId = 0;
+      this.scheduleRender();
+      return;
+    }
+    this.growthId = requestAnimationFrame(this.growthTick);
+    this.render();
+  };
 
   private scheduleRender(): void {
     if (this.rafId) return;
@@ -129,6 +281,34 @@ export class ChartRenderer {
       this.render();
     });
   }
+
+  /**
+   * Start or stop the clock-driven repaint.
+   *
+   * Called whenever the data or the options change, so a chart that becomes live
+   * starts moving at once and one that is pinned stops dead. The loop only
+   * repaints: the axis position is read from the clock inside `render`, so there
+   * is no offset to advance and nothing to go stale.
+   */
+  private syncPan(): void {
+    const shouldPan = this.options.live && !!this.data;
+    if (shouldPan && !this.panId) {
+      this.panId = requestAnimationFrame(this.panTick);
+    } else if (!shouldPan && this.panId) {
+      cancelAnimationFrame(this.panId);
+      this.panId = 0;
+      this.scheduleRender();
+    }
+  }
+
+  private readonly panTick = (): void => {
+    this.panId = requestAnimationFrame(this.panTick);
+    // A redraw per frame is the point: the axis is a continuous function of the
+    // clock, so anything slower would visibly step.
+    this.render();
+    // The plot slid, so the bucket under a motionless pointer is a different one.
+    this.refreshHover();
+  };
 
   private render(): void {
     const rect = this.canvas.getBoundingClientRect();
@@ -163,23 +343,45 @@ export class ChartRenderer {
     const padLeft = this.padLeftForHeight(this.height - padTop - padBottom);
     const plotWidth = Math.max(1, this.width - padLeft - padRight);
     const plotHeight = Math.max(1, this.height - padTop - padBottom);
+    // Remember the geometry so hit-testing uses the same rectangle the bars were
+    // drawn into rather than a guess derived from the canvas size.
+    this.plotLeft = padLeft;
+    this.plotWidth = plotWidth;
 
-    const tEnd = new Date(this.data.period_end).getTime();
-    const tStart = new Date(this.data.period_start).getTime();
+    const periodEnd = new Date(this.data.period_end).getTime();
+    const periodStart = new Date(this.data.period_start).getTime();
 
-    // The time axis is linear, so equal spans of time get equal widths and a
-    // bar's width says how long its bucket was.
-    this.axis = createTimeAxis(tStart, tEnd);
+    // A live chart's window ends now, not at the instant the data was fetched,
+    // so the axis advances with the clock and the bars slide leftwards under it.
+    // The span comes from the data, so the window keeps the period's full width
+    // and a 10-minute chart covers exactly ten minutes. A pinned chart draws the
+    // fetched period as it was fetched.
+    const span = periodEnd - periodStart;
+    const now = Date.now();
+    const tEnd = this.options.live ? Math.max(periodEnd, now) : periodEnd;
+    const tStart = tEnd - span;
 
-    this.bins = this.data.bins.map((bin) => ({
-      start: new Date(bin.start).getTime(),
-      end: new Date(bin.end).getTime(),
-      value: this.options.metric === 'spend' ? (bin.spend_micro ?? 0) : (bin.input_tokens ?? 0) + (bin.output_tokens ?? 0),
-      input: bin.input_tokens ?? 0,
-      output: bin.output_tokens ?? 0,
-      partial: bin.partial,
-      missing: bin.missing,
-    }));
+    // The axis does not clamp: a bin whose bucket has slid past the left edge
+    // must leave the plot, not pin itself to it and read as the newest value.
+    this.axis = createTimeAxis(tStart, tEnd, { clamp: false });
+
+    this.bins = this.data.bins.map((bin) => {
+      const start = new Date(bin.start).getTime();
+      const nominalEnd = new Date(bin.end).getTime();
+      // A live current bucket grows to the clock between fetches. The payload
+      // keeps the full bucket end so this clamp can ride `now` instead of
+      // freezing at whatever instant the data was built.
+      const end = Math.min(nominalEnd, tEnd, this.options.live ? now : tEnd);
+      return {
+        start,
+        end: Math.max(start, end),
+        value: this.options.metric === 'spend' ? (bin.spend_micro ?? 0) : (bin.input_tokens ?? 0) + (bin.output_tokens ?? 0),
+        input: bin.input_tokens ?? 0,
+        output: bin.output_tokens ?? 0,
+        partial: bin.partial || (this.options.live && nominalEnd > now),
+        missing: bin.missing,
+      };
+    });
 
     const rawMax = Math.max(
       0,
@@ -200,6 +402,13 @@ export class ChartRenderer {
     // Bars.
     const barTop = padTop;
     const barHeight = plotHeight;
+    // A panning axis puts bins outside the plot, so the bars are clipped to it.
+    // Without this a bin that has slid off the left edge would be drawn over the
+    // value axis and its labels.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(padLeft, barTop, plotWidth, barHeight);
+    ctx.clip();
     for (const bin of this.bins) {
       const rawStart = padLeft + this.axis.positionOf(bin.start) * plotWidth;
       const rawEnd = padLeft + this.axis.positionOf(bin.end) * plotWidth;
@@ -220,26 +429,42 @@ export class ChartRenderer {
         continue;
       }
 
+      const growth = this.growths.get(bin.start);
+      const frame = growth ? barGrowthFrame(growth, now) : null;
+      const shown = frame ? frame.shown : bin.value;
+      const base = frame && !frame.solid ? frame.base : shown;
+
       if (this.options.metric === 'spend') {
-        const h = Math.max(1, (bin.value / maxValue) * barHeight);
-        ctx.fillStyle = bin.partial ? COLORS.partial : COLORS.spend;
-        ctx.fillRect(xStart, barTop + barHeight - h, w, h);
+        const h = Math.max(1, (shown / maxValue) * barHeight);
+        if (frame && !frame.solid) {
+          const baseH = (base / maxValue) * barHeight;
+          if (baseH > 0) {
+            ctx.fillStyle = COLORS.spend;
+            ctx.fillRect(xStart, barTop + barHeight - baseH, w, baseH);
+          }
+          ctx.fillStyle = COLORS.growth;
+          ctx.fillRect(xStart, barTop + barHeight - h, w, Math.max(1, h - baseH));
+        } else {
+          ctx.fillStyle = COLORS.spend;
+          ctx.fillRect(xStart, barTop + barHeight - h, w, h);
+        }
       } else {
         const total = bin.input + bin.output;
-        const totalH = Math.max(1, (total / maxValue) * barHeight);
+        const totalH = Math.max(1, (shown / maxValue) * barHeight);
         const inputH = total > 0 ? (bin.input / total) * totalH : 0;
         const outputH = totalH - inputH;
         ctx.fillStyle = COLORS.input;
         ctx.fillRect(xStart, barTop + barHeight - inputH, w, inputH);
         ctx.fillStyle = COLORS.output;
         ctx.fillRect(xStart, barTop + barHeight - inputH - outputH, w, outputH);
-      }
-
-      if (bin.partial) {
-        ctx.fillStyle = COLORS.partial;
-        ctx.fillRect(xStart, barTop, w, 1.5);
+        if (frame && !frame.solid) {
+          const baseH = (base / maxValue) * barHeight;
+          ctx.fillStyle = COLORS.growth;
+          ctx.fillRect(xStart, barTop + barHeight - totalH, w, Math.max(1, totalH - baseH));
+        }
       }
     }
+    ctx.restore();
 
     // Crosshair.
     if (this.hoverIndex >= 0 && this.hoverIndex < this.bins.length) {
@@ -370,15 +595,29 @@ export class ChartRenderer {
       nowLabel: 'now',
     });
 
+    const majorX: number[] = [];
+    const minorX: number[] = [];
     for (const tick of ticks) {
       const x = padLeft + tick.position * plotWidth;
-      ctx.strokeStyle = tick.major ? COLORS.gridMajor : COLORS.gridMinor;
+      if (tick.major) majorX.push(x);
+      else minorX.push(x);
+    }
+
+    const drawTickSet = (positions: number[], color: string) => {
+      if (positions.length === 0) return;
+      ctx.strokeStyle = color;
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(Math.round(x) + 0.5, padTop);
-      ctx.lineTo(Math.round(x) + 0.5, padTop + plotHeight);
+      for (const x of positions) {
+        // Keep sub-pixel x so every line pans continuously with the bars.
+        ctx.moveTo(x, padTop);
+        ctx.lineTo(x, padTop + plotHeight);
+      }
       ctx.stroke();
-    }
+    };
+
+    drawTickSet(minorX, COLORS.gridMinor);
+    drawTickSet(majorX, COLORS.gridMajor);
   }
 
   private drawLabels(
@@ -410,24 +649,47 @@ export class ChartRenderer {
   private pointerToIndex(event: PointerEvent): number {
     if (!this.axis) return -1;
     const rect = this.canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left - 2;
-    const plotWidth = Math.max(1, rect.width - 4);
-    return hitTest(this.axis, this.bins, x, plotWidth, 8);
+    // Plot-relative, not canvas-relative: the value gutter on the left is not
+    // part of the plot, and counting it shifts every hit.
+    const x = event.clientX - rect.left - this.plotLeft;
+    return hitTest(this.axis, this.bins, x, Math.max(1, this.plotWidth), 8);
   }
 
   private onPointerMove(event: PointerEvent): void {
+    this.pointer = { x: event.clientX, y: event.clientY };
     const index = this.pointerToIndex(event);
     if (index === this.hoverIndex) {
-      this.positionTooltip(event);
+      this.positionTooltip(this.pointer);
       return;
     }
     this.hoverIndex = index;
     this.scheduleRender();
     this.updateTooltip();
-    this.positionTooltip(event);
+    this.positionTooltip(this.pointer);
+  }
+
+  /**
+   * Re-read the bin under a motionless pointer.
+   *
+   * A live chart slides beneath the pointer, so the bucket being pointed at
+   * changes without the pointer moving. Refreshing only on `pointermove` left the
+   * tooltip naming whichever bucket happened to be under the pointer when it last
+   * moved, while the crosshair followed the pan — the tooltip would still say
+   * "5m ago" after the window had carried that bucket past the left edge.
+   */
+  private refreshHover(): void {
+    if (!this.pointer || !this.axis) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const x = this.pointer.x - rect.left - this.plotLeft;
+    const index = hitTest(this.axis, this.bins, x, Math.max(1, this.plotWidth), 8);
+    if (index === this.hoverIndex) return;
+    this.hoverIndex = index;
+    this.updateTooltip();
+    this.positionTooltip(this.pointer);
   }
 
   private onPointerLeave(): void {
+    this.pointer = null;
     this.hoverIndex = -1;
     this.tooltip.hidden = true;
     this.scheduleRender();
@@ -438,11 +700,11 @@ export class ChartRenderer {
     if (index >= 0) this.options.onBinClick?.(index);
   }
 
-  private positionTooltip(event: PointerEvent): void {
+  private positionTooltip(at: { x: number; y: number }): void {
     if (this.tooltip.hidden) return;
     const rect = this.canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
+    const x = at.x - rect.left;
+    const y = at.y - rect.top;
     const tw = this.tooltip.offsetWidth;
     const th = this.tooltip.offsetHeight;
     const left = Math.min(Math.max(2, x + 10), rect.width - tw - 2);

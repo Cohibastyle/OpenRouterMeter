@@ -4,7 +4,7 @@ Keep a list of issues here and their status.
 
 ## Open Issues
 
-None outstanding. This batch is closed; see below.
+None.
 
 ## Closed Issues
 
@@ -109,8 +109,7 @@ None outstanding. This batch is closed; see below.
    selected interval, and the breakdown was built from usage rows alone, so the
    other eleven silently vanished. `mergeKeysIntoRows()` now appends a row for
    every known key with no usage, sorted by label, and those rows read
-   `no usage in this interval` with dimmed styling rather than `$0.00`, which
-   would have been a lie.
+   `no usage in this interval` with dimmed styling rather than `$0.00`, which   would have been a lie.
 
 13. **The Models tab showed no data.**
    The models table was fine; the tab was reporting on data that issue 3's
@@ -129,6 +128,126 @@ None outstanding. This batch is closed; see below.
     would overrun its window; a fall or a change of string shape is repainted
     instead of rolled. The chip appears on a rise and flashes once. Verified with
     a live snapshot: the columns stepped `406 -> 506 -> 507 -> 508` across frames
-    and the chip rendered `↑ $0.008000` with its flash class applied. An increase
-    too small to change the formatted text starts no roll at all, because there is
-    nothing to travel.
+    and the chip rendered `↑ $0.008000` with its flash class applied.
+
+    *Amended:* this entry originally closed with "an increase too small to change
+    the formatted text starts no roll at all, because there is nothing to travel."
+    That was true but it was the bug, not the behaviour: on a live account the
+    headline's two decimals rounded away real increases, so the roll legitimately
+    had nothing to animate while the number was in fact rising. See issue 16.
+
+16. **The headline never rolled and the increase chip had stopped appearing.**
+    Three separate faults, all of which had to be fixed for the roll to be visible.
+
+    *The headline was rounded too coarsely.* `formatMetricValue('spend', …)` prints
+    two decimals above a dollar, so a live 24-hour total of `$4.5162` rendered as
+    `$4.52` and an increase of up to half a cent left the string identical. Since
+    `planRoll` and `animateHeadline` both bail when `fromText === toText`, a rising
+    counter sat perfectly still. Spend in the headline now goes through
+    `formatSpendHeadline`, which keeps three decimals below $1,000 — a $0.001 step
+    — and four significant digits below a dollar. Strip cells and tooltips keep the
+    old, tighter form, because a cell has a fixed width to fit.
+
+    *The first increase after launch was never diffed.* `boot()` painted the first
+    frame before `state.headline` had any value, and `trackDelta` only records a
+    change when a previous snapshot for the same interval exists. The first pushed
+    snapshot therefore became the baseline instead of a change, so the chip was
+    absent exactly once — which is why it looked intermittent rather than broken.
+    `boot()` now seeds the baseline with `trackDelta(snapshot)` before painting.
+
+    *The chip's life was shorter than a refresh.* `INCREASE_TTL_MS` was a fixed
+    5 s against a default 10 s refresh, so the chip was on screen for only half of
+    every cycle. Both the chip's lifetime and the roll's duration are now derived
+    from `parameters.refresh_sec`: the chip lasts 1.2 cycles clamped to 5–20 s, and
+    the roll takes at most 18 % of a cycle (1.8 s at the default) so it always
+    finishes before the next change arrives.
+
+    Verified in a browser harness with a mock `window.widget`: a single snapshot
+    push immediately after boot now yields `metric-increase is-new` reading
+    `↑ $0.08000` and `.odo` columns in the headline, and the headline text changes
+    on every push that moves spend by a cent or more.
+
+17. **The window background was translucent.**
+    `tauri.conf.json` had `transparent: true` and `shadow: false`, and every surface
+    in `app.css` was a translucent tint under a `backdrop-filter: blur(18px)`
+    shell. A widget reads as a solid panel, and a blurred backdrop would smear the
+    panned chart underneath it. The window is now `transparent: false` with
+    `shadow: true`; `--panel`, `--panel-raised` and the page background are opaque
+    in both themes, the `backdrop-filter` is gone, and the status bar and tab bar
+    use a `color-mix` shade of the panel instead of a wash of translucent black,
+    each with an opaque fallback declared first for engines without `color-mix`.
+
+18. **The chart did not pan smoothly; it jumped once per refresh.**
+    Issue 2 made the chart follow the clock, but only by re-anchoring on each load,
+    so the window advanced in steps — once per snapshot, and by however much time
+    had passed since the last one. Two changes make it continuous:
+
+    `t_end` is now the clock rather than the fetch time, and `t_start` is
+    `t_end - (period_end - period_start)`, so the window keeps the period's full
+    width and advances exactly one screen-span per span of wall clock — a 10-minute
+    chart moves one minute of axis every minute. A `requestAnimationFrame` loop in
+    `ChartRenderer` repaints every frame while `live` is set, and stops when the
+    chart is pinned, hidden, or destroyed.
+
+    The axis no longer clamps (`createTimeAxis` takes `{ clamp: false }`), so a
+    bucket that slides past the left edge leaves the plot instead of pinning to it
+    and reading as the newest value; bars are clipped to the plot rectangle so they
+    cannot paint over the value gutter. Hit-testing was measuring the canvas rather
+    than the plot, which put the pointer up to a gutter's width away — about 26 px
+    at the left edge — from the bar under it; it now uses the geometry the bars were
+    drawn with. A motionless pointer re-reads its bucket each frame, so the tooltip
+    follows what slides under it instead of freezing on the bucket that was there
+    when the pointer last moved. The period label is computed from the same two
+    instants, so it names the window actually on screen rather than the fetch time.
+
+    Measured in the browser harness against aperiodic mock data: the plot and the
+    axis strip both change every frame, and the frame-to-frame shift realigns at
+    the expected 1.41 px/s for a 10-minute chart.
+
+19. **Display opacity changed in Settings but did nothing.**
+    The slider patched `settings.display.opacity`, but no runtime path ever applied
+    it to the rendered widget. The value was saved and reported by
+    `window:getState`, yet the on-screen opacity stayed at 100%.
+
+    Fixed in `src-tauri/src/shell.rs`, `src-tauri/src/bridge.rs`, and
+    `src/renderer/index.ts`:
+    `settings_set` now applies `display` runtime fields immediately, and the shell
+    replays display runtime fields on startup (`always_on_top`, `ghost`) instead of
+    forcing `always_on_top` to `normal`. Opacity is now applied natively on macOS
+    through `NSWindow.setAlphaValue` (40–100% clamped), and `window_state` exposes
+    `native_opacity` so the renderer can skip double-applying opacity when the host
+    already handles it; the DOM fallback remains for browser harnesses.
+
+    This makes the setting persistent and live: changing the slider updates the
+    window right away, and relaunch keeps the selected opacity.
+
+20. **The most recent chart bar did not appear live.**
+    `render()` destroyed `ChartRenderer` on every snapshot, so each payload was a
+    first paint with no previous height to grow from. The payload also clamped
+    `bin.end` to the fetch instant, which froze the current bar's width until the
+    range was changed. The renderer is now reused via `reattach`, the payload keeps
+    the nominal bucket end, and a live chart grows the current bar to `now`
+    between fetches.
+
+21. **New data did not grow from the existing bar and turn solid after four seconds.**
+    Height animation is planned in `src/shared/barGrowth.ts`: the previous value
+    stays put, the increment rises in 480 ms, and the whole bar turns solid after
+    4 s. A DOM rebuild keeps an in-flight plan so `setData` twice cannot restart
+    the solidify. Spend draws the increment in amber (`#fbbf24`); tokens keep the
+    stack and cap the rise the same way.
+
+22. **Confirm the increase chip when new data arrives.**
+    The chip was already driven by `trackDelta` on every snapshot, using the same
+    window cell as the headline. That path is unchanged: `handleSnapshot` records
+    the delta before `render()`, so a rise still produces `↑` with the interval
+    change and a fall still produces `↓ Recalculated`. Chart reuse no longer
+    rebuilds the renderer in a way that would hide it.
+
+23. **The interval buttons and the headline did not add up with the chart.**
+    Windows used one granularity for the whole trailing range while the chart
+    chose per bin, so a 24-hour total dropped the current hour of minute rows
+    whenever hour rows "covered" the range. Bins are now clipped to the trailing
+    window (half-open on the bucket start), and `computeWindows` sums the same
+    bins `buildChart` draws. The selected interval, the headline, and the bar sum
+    are one number. The five buttons overlap and are never summed together.
+    `live_snapshot` / `live_chart` now pass collection ranges and honour `keyId`.

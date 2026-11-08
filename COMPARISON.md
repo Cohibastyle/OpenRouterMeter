@@ -74,8 +74,9 @@ in UTC — the first CI run to actually execute the workflow caught it.
 ## Rendering
 
 Both builds render the same four size classes at identical pixel dimensions
-(2× retina). The Tauri captures are in `captures-tauri/`; the Electron ones come
-from `npm run capture`.
+(2× retina). The Tauri captures are in `docs/images/`, written by
+`npm run capture`; the Electron ones come from the same command in the Electron
+tree.
 
 Four rendering differences were found and fixed during the port:
 
@@ -100,11 +101,13 @@ Four rendering differences were found and fixed during the port:
   showing the window again does not fire a burst of catch-up refreshes.
 
 The capture harness also needed a fix: `screencapture -R` records the screen, so
-a transparent window with `backdrop-filter` came out blurred against the
-desktop. `src-tauri/src/capture.rs` asks the content view to draw itself into a
-bitmap instead, the same thing Electron's `capturePage` does, and retries while
-the buffer is still a flat colour because the first size class is captured
-before the webview has painted.
+it only ever captured whichever window happened to be in front. `src-tauri/src/
+capture.rs` asks the content view to draw itself into a bitmap instead, the same
+thing Electron's `capturePage` does, and retries while the buffer is still a flat
+colour because the first size class is captured before the webview has painted.
+The window is opaque as of v0.3.0, so the harness is no longer working around a
+`backdrop-filter`, but the buffer read is kept: it works whether or not the
+widget is frontmost.
 
 ## Collector
 

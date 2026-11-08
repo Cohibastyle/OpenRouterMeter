@@ -456,9 +456,14 @@ pub fn analytics_to_requests(rows: &[Value], granularity: &str, key_names: &BTre
                 "key_name": raw_key,
                 "model": dims_obj.get("model").and_then(|v| v.as_str()),
                 "status": "aggregate",
-                "input_tokens": row["tokens_prompt"].as_i64(),
-                "output_tokens": row["tokens_completion"].as_i64(),
-                "total_tokens": row["tokens_total"].as_i64(),
+                // `parse_analytics_response` stores these through `num`, which
+                // yields an f64, and `as_i64` returns None for a JSON float.
+                // Reading them with `as_i64` silently dropped every token
+                // figure, which is why the Tokens chart and the token columns
+                // read zero while spend was correct.
+                "input_tokens": row["tokens_prompt"].as_f64().map(|v| v as i64),
+                "output_tokens": row["tokens_completion"].as_f64().map(|v| v as i64),
+                "total_tokens": row["tokens_total"].as_f64().map(|v| v as i64),
                 // total_usage is in dollars, not micro-dollars.
                 "cost_micro": row["total_usage_micro"].as_f64().map(micro_from_number),
                 // The source's own count for this bucket. Without it the window
@@ -492,9 +497,9 @@ pub fn activity_to_requests(rows: &[Value]) -> Vec<Value> {
                 "key_name": row["key_name"],
                 "model": row["model"],
                 "status": "aggregate",
-                "input_tokens": row["input_tokens"],
-                "output_tokens": row["output_tokens"],
-                "total_tokens": row["total_tokens"],
+                "input_tokens": row["input_tokens"].as_f64().map(|v| v as i64),
+                "output_tokens": row["output_tokens"].as_f64().map(|v| v as i64),
+                "total_tokens": row["total_tokens"].as_f64().map(|v| v as i64),
                 "cost_micro": row["cost_micro"],
                 "request_count": row["requests"].as_f64().map(|v| v as i64),
                 "source": "openrouter.activity",
@@ -547,6 +552,35 @@ mod tests {
         let rows = parsed["rows"].as_array().unwrap();
         let requests = analytics_to_requests(rows, "hour", &BTreeMap::new());
         assert_eq!(requests[0]["request_count"], 42);
+    }
+
+    #[test]
+    fn an_analytics_row_keeps_its_token_counts() {
+        // The same f64/as_i64 mistake dropped every token figure: the source
+        // returns `tokens_*` as strings, `parse_analytics_response` stores them
+        // through `num` as floats, and `as_i64` on a JSON float is None. Spend
+        // was correct while the Tokens chart and both token columns read zero.
+        let payload = json!({
+            "data": {
+                "data": [
+                    {
+                        "date__hour": "2026-11-06 12:00:00",
+                        "total_usage": 0.5,
+                        "tokens_total": "1205833",
+                        "tokens_prompt": "1000000",
+                        "tokens_completion": "205833",
+                        "request_count": "8",
+                    },
+                ],
+                "metadata": { "truncated": false }
+            }
+        });
+        let parsed = parse_analytics_response(&payload, "hour", &[]);
+        let rows = parsed["rows"].as_array().unwrap();
+        let requests = analytics_to_requests(rows, "hour", &BTreeMap::new());
+        assert_eq!(requests[0]["total_tokens"], 1_205_833);
+        assert_eq!(requests[0]["input_tokens"], 1_000_000);
+        assert_eq!(requests[0]["output_tokens"], 205_833);
     }
 
     #[test]

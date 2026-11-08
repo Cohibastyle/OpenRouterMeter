@@ -1,5 +1,5 @@
 import type { ChartBin, ChartData, Metric, RequestRecord, WindowKey } from './types.js';
-import { sumMicro } from './money.js';
+import { sumIntOrNull, sumMicro } from './money.js';
 import { selectGranularity, type CollectionRange } from './granularity.js';
 
 /**
@@ -45,6 +45,8 @@ export interface ChartRequest {
   collectionRanges?: ReadonlyArray<CollectionRange>;
   requests: ReadonlyArray<RequestRecord>;
   sample: boolean;
+  /** Evaluation instant; defaults to the clock. Tests freeze this. */
+  now?: number;
 }
 
 interface Period {
@@ -76,9 +78,38 @@ export function buildPeriod(scale: ChartScale, anchor: number, _weekStart: 'mond
   return { start, end, bins };
 }
 
+/**
+ * Half-open membership used by both the trailing windows and the chart bins.
+ *
+ * Analytics rows are bucket starts, so a row at `start` belongs to this interval
+ * and a row at `end` belongs to the next one. The same rule on every consumer is
+ * what makes the selected interval, the headline, and the chart bars add up.
+ */
+export function inHalfOpenRange(t: number, start: number, end: number): boolean {
+  return t >= start && t < end;
+}
+
+/**
+ * Intersection of a bin with the trailing window, or null when they miss.
+ *
+ * Bins are aligned to a grid that can start before the window, so without this
+ * clip the first bar would count spend the interval button does not include.
+ */
+export function clippedBinInterval(
+  binStart: number,
+  binEnd: number,
+  periodStart: number,
+  periodEnd: number,
+): { start: number; end: number } | null {
+  const start = Math.max(binStart, periodStart);
+  const end = Math.min(binEnd, periodEnd);
+  if (end <= start) return null;
+  return { start, end };
+}
+
 export function buildChart(request: ChartRequest): ChartData {
   const period = buildPeriod(request.scale, request.anchor, request.weekStart);
-  const now = Date.now();
+  const now = request.now ?? Date.now();
   // The right edge of the axis is the current time for the current period and
   // the period end for a past period. It is never in the future.
   const axisEnd = Math.min(period.end, now);
@@ -88,27 +119,48 @@ export function buildChart(request: ChartRequest): ChartData {
     // future bin onto the right edge of the time axis.
     .filter((bin) => bin.start < axisEnd)
     .map((bin) => {
+      const clip = clippedBinInterval(bin.start, bin.end, period.start, axisEnd);
+      // Keep the nominal bucket end, even when it is still in the future, so a
+      // live chart can grow the current bar to `now` between fetches instead of
+      // freezing the width at whatever instant this payload was built.
+      if (!clip) {
+        return {
+          start: new Date(bin.start).toISOString(),
+          end: new Date(bin.end).toISOString(),
+          spend_micro: null,
+          input_tokens: null,
+          output_tokens: null,
+          total_tokens: null,
+          request_count: null,
+          partial: bin.end > now,
+          missing: true,
+        };
+      }
       // One granularity per bin. Summing every row would count the same spend
-      // at minute, hour, and day granularity.
+      // at minute, hour, and day granularity. The current partial bin therefore
+      // reads minute rows when they cover it, while older bins keep hour rows —
+      // which is also how the interval buttons are summed, so the totals match.
       const choice = selectGranularity(
         request.requests,
-        bin.start,
-        bin.end,
+        clip.start,
+        clip.end,
         bin.end - bin.start,
         request.collectionRanges ?? [],
       );
       const inBin = choice.rows.filter((r) => {
         const t = new Date(r.event_time).getTime();
-        return t >= bin.start && t < bin.end;
+        return inHalfOpenRange(t, clip.start, clip.end);
       });
       const partial = bin.end > now;
       const missing = inBin.length === 0;
       return {
         start: new Date(bin.start).toISOString(),
-        end: new Date(Math.min(bin.end, axisEnd)).toISOString(),
+        end: new Date(bin.end).toISOString(),
         spend_micro: missing ? null : sumMicro(inBin.map((r) => r.cost_micro)),
         input_tokens: missing ? null : sumMicro(inBin.map((r) => r.input_tokens)),
         output_tokens: missing ? null : sumMicro(inBin.map((r) => r.output_tokens)),
+        total_tokens: missing ? null : sumIntOrNull(inBin.map((r) => r.total_tokens)),
+        request_count: missing ? null : sumIntOrNull(inBin.map((r) => r.request_count)),
         partial,
         missing,
       };

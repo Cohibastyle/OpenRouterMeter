@@ -59,6 +59,7 @@ export const api: WidgetApi = {
     hide: () => invoke('window_hide'),
     close: () => invoke('window_close'),
     resetSize: () => invoke('window_reset_size'),
+    moveBy: (delta) => invoke('window_move_by', { delta }),
     onLayout: (cb: (layout: LayoutInfo) => void) => subscribe<LayoutInfo>('window:layout', cb),
   },
   settings: {

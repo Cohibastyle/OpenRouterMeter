@@ -349,6 +349,56 @@ impl Db {
         rows.map(|r| r.filter_map(|v| v.ok()).collect()).unwrap_or_default()
     }
 
+    /// Record the range a granularity was fetched for.
+    ///
+    /// Rows alone cannot prove coverage: an hour with no activity produces no
+    /// row, so a window that reaches into it would look uncovered. The recorded
+    /// range is what lets `select_granularity` answer honestly.
+    pub fn record_collection_range(
+        &mut self,
+        granularity_ms: i64,
+        range_start: &str,
+        range_end: &str,
+        fetched_at: &str,
+    ) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT INTO collection_range (granularity_ms, range_start, range_end, fetched_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(granularity_ms) DO UPDATE SET
+               range_start = excluded.range_start,
+               range_end = excluded.range_end,
+               fetched_at = excluded.fetched_at",
+            params![granularity_ms, range_start, range_end, fetched_at],
+        )?;
+        Ok(())
+    }
+
+    /// The recorded fetch range per granularity, as `(granularity_ms, start, end)`.
+    pub fn collection_ranges(&self) -> Vec<(i64, i64, i64)> {
+        let mut stmt = match self
+            .conn
+            .prepare("SELECT granularity_ms, range_start, range_end FROM collection_range")
+        {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        });
+        rows.map(|r| {
+            r.filter_map(|v| v.ok())
+                .filter_map(|(g, start, end)| {
+                    Some((g, crate::accounting::parse_time(&start)?, crate::accounting::parse_time(&end)?))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
     pub fn vacuum(&self) -> rusqlite::Result<()> {
         self.conn.execute_batch("VACUUM")
     }

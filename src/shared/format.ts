@@ -35,6 +35,32 @@ export function formatSpendCompact(micro: number | null | undefined): string {
 }
 
 /**
+ * Spend as shown in a headline: never coarser than a tenth of a cent.
+ *
+ * A headline is the one number the reader watches, so it has to be stated finely
+ * enough that new usage actually moves the digits. Two decimals above a dollar
+ * rounded a live account's whole 24-hour total to a figure that several cents of
+ * new usage left unchanged, so the number sat still while it was rising — and
+ * because the roll only fires when the rendered text changes, it never rolled
+ * either.
+ *
+ * Below a thousand dollars the figure therefore always keeps three decimals,
+ * which is a $0.001 step, and it keeps four significant digits below a dollar so
+ * a small counter still reads `$0.06480`. Larger totals go compact so a headline
+ * with a six-figure total still fits a narrow window.
+ */
+export function formatSpendHeadline(micro: number | null | undefined): string {
+  if (micro === null || micro === undefined || !Number.isFinite(micro)) return DASH;
+  const usd = micro / MICRO;
+  if (usd === 0) return '$0.00';
+  const abs = Math.abs(usd);
+  const sign = usd < 0 ? '-' : '';
+  if (abs >= 1000) return `$${compactNumber(usd)}`;
+  const digits = Math.max(3, Math.min(6, 3 - Math.floor(Math.log10(abs))));
+  return `${sign}$${abs.toFixed(digits)}`;
+}
+
+/**
  * A number rounded to at most `maxSig` significant digits, in plain decimal.
  *
  * Decimals are dropped as the magnitude grows, so 1.234, 12.34, 123.4, and 1234
@@ -121,6 +147,19 @@ export function formatAxisValue(metric: 'spend' | 'tokens', value: number | null
  */
 export function formatMetricValue(metric: 'spend' | 'tokens', value: number | null | undefined): string {
   if (metric === 'spend') return formatSpendCompact(value);
+  return formatTokensPrecise(value);
+}
+
+/**
+ * The display formatter for the large headline number.
+ *
+ * Identical to {@link formatMetricValue} except that spend keeps four significant
+ * digits past a dollar. Only the headline does this: a strip cell has a fixed
+ * width to fit, and widening every cell in the strip to buy precision the eye
+ * cannot read at that size would cost the interval labels their room.
+ */
+export function formatMetricHeadline(metric: 'spend' | 'tokens', value: number | null | undefined): string {
+  if (metric === 'spend') return formatSpendHeadline(value);
   return formatTokensPrecise(value);
 }
 

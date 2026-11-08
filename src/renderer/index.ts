@@ -20,6 +20,7 @@ import type {
 import {
   DASH,
   formatAgeSince,
+  formatMetricHeadline,
   formatMetricValue,
   formatClock,
   formatCount,
@@ -44,10 +45,32 @@ declare global {
 
 const api = window.widget;
 
-/** How long the headline takes to roll from one value to the next. */
+/** How long the headline takes to roll from one value to the next, at most. */
 const HEADLINE_ANIM_MS = 2000;
-/** How long the "last increase" chip stays at full opacity. */
-const INCREASE_TTL_MS = 5000;
+/**
+ * Share of the refresh interval a roll is allowed to occupy.
+ *
+ * The roll must finish before the next refresh arrives, or a counter that
+ * arrives at its target exactly as the next change lands would look like it
+ * never settled. A short interval therefore gets a shorter roll: at the default
+ * ten-second refresh the roll takes 1.8 s, and a deliberately brisk one-second
+ * interval still gets 180 ms.
+ */
+const HEADLINE_ROLL_SHARE = 0.18;
+/**
+ * Shares of the refresh interval used to size the chip's life.
+ *
+ * The chip describes one refresh-to-refresh change, so it has to outlive the
+ * refresh that produced it. A fixed five seconds against a ten-second refresh
+ * left the headline bare for half of every cycle, which is what made the chip
+ * look as though it had stopped appearing. Sizing it a little longer than one
+ * cycle keeps a chip on screen continuously while the number is rising; the
+ * bounds stop a very fast interval from flickering and a very slow one from
+ * pinning a stale figure to the headline.
+ */
+const INCREASE_TTL_SHARE = 1.2;
+const INCREASE_TTL_MIN_MS = 5000;
+const INCREASE_TTL_MAX_MS = 20000;
 /** How long a fresh increase holds its inverse (filled) look. */
 const INCREASE_FLASH_MS = 900;
 /** How long the chip takes to fade once its time is up. */
@@ -149,6 +172,8 @@ interface AppState {
   deltas: Record<Metric, Delta | null>;
   /** Scroll offset of the Settings pane, restored after it is rebuilt. */
   settingsScroll: number;
+  /** Whether the host applies opacity to the native window itself. */
+  nativeOpacity: boolean;
 }
 
 const state: AppState = {
@@ -195,6 +220,7 @@ const state: AppState = {
   rolls: { spend: null, tokens: null },
   deltas: { spend: null, tokens: null },
   settingsScroll: 0,
+  nativeOpacity: false,
 };
 
 let chartRenderer: ChartRenderer | null = null;
@@ -235,6 +261,7 @@ async function boot(): Promise<void> {
   state.settings = settings;
   state.snapshot = snapshot;
   state.layout = layoutState.layout;
+  state.nativeOpacity = layoutState.native_opacity ?? false;
   state.version = version;
   state.credential = credential;
   state.tab = settings.view.tab;
@@ -248,6 +275,11 @@ async function boot(): Promise<void> {
   applyTheme();
   applyLayout();
   renderTabs();
+  // Seed the delta baseline from the boot snapshot before the first frame is
+  // painted. A baseline taken from the first live snapshot instead would make
+  // that snapshot the reference point rather than a change, so the first
+  // increase after launch never produced a chip.
+  trackDelta(snapshot);
   render();
   wireChrome();
 
@@ -268,11 +300,8 @@ async function boot(): Promise<void> {
   tabUnsubscribe = api.view.onTab((tab) => activateTab(tab));
 
   chartInvalidateUnsubscribe = api.charts.onInvalidate(() => {
-    if (state.subview !== 'charts') return;
-    // Re-render as well as reload: the period label and the axis both move when
-    // the chart follows the clock, so a bare setData would leave the header
-    // naming the previous window.
-    void loadChart().then(() => render());
+    if (!chartShouldShow()) return;
+    void loadChart();
   });
 
   logEntryUnsubscribe = api.logs.onEntry((entry) => {
@@ -312,11 +341,18 @@ function applyLayout(): void {
   // The status bar is the drag handle, so the lock setting suppresses it here
   // rather than only in the scripted drag handler.
   root.dataset.locked = String(state.settings?.display.locked ?? false);
+  const opacity = state.settings?.display.opacity ?? 100;
+  // On macOS the host applies opacity to the NSWindow itself, which keeps the
+  // shadow and hit-testing in sync; the DOM fallback stays for browser harnesses.
+  root.style.opacity = state.nativeOpacity
+    ? '1'
+    : String(Math.max(40, Math.min(100, opacity)) / 100);
 }
 
 async function refreshLayout(): Promise<void> {
   const stateInfo = await api.window.getState();
   state.layout = stateInfo.layout;
+  state.nativeOpacity = stateInfo.native_opacity ?? false;
   applyLayout();
   renderTabs();
   render();
@@ -517,9 +553,9 @@ function handleSnapshot(next: Snapshot): void {
   if (state.tab === 'requests') void loadBreakdown();
   if (state.tab === 'api') void loadKeys();
   // The chart follows the clock, so it is re-fetched on every snapshot rather
-  // than only on the slower chart timer. That is what makes the window slide
-  // across the x axis instead of jumping once a minute.
-  if (state.subview === 'charts' || state.layout.showChart) void loadChart();
+  // than only on the slower chart timer. That is what makes the last bar grow
+  // as new usage arrives instead of waiting for a range change.
+  if (chartShouldShow()) void loadChart();
   render();
 }
 
@@ -577,6 +613,37 @@ function recordDelta(
 }
 
 /**
+ * How long a headline roll may take at the current refresh interval.
+ *
+ * A roll has to finish before the next change lands, or a number that reaches its
+ * target exactly as the following refresh arrives looks like it never settled.
+ * The default ten-second refresh therefore gets a 1.8 s roll; a deliberately
+ * brisk one-second interval still gets 180 ms, and a slow one is capped at the
+ * two seconds the animation was tuned for instead of rolling for a minute.
+ */
+function headlineRollMs(): number {
+  const refreshSec = state.settings?.parameters.refresh_sec ?? 10;
+  const share = Math.round(refreshSec * 1000 * HEADLINE_ROLL_SHARE);
+  return Math.max(120, Math.min(HEADLINE_ANIM_MS, share));
+}
+
+/**
+ * How long the increase chip stays on screen at the current refresh interval.
+ *
+ * The chip describes one refresh-to-refresh change, so it has to outlive the
+ * refresh that produced it. A fixed five seconds against a ten-second refresh
+ * left the headline bare for half of every cycle — which is why the chip seemed
+ * to have stopped appearing. Raising the interval stretches the chip so it
+ * always covers a little more than one cycle; lowering it below five seconds
+ * keeps the floor rather than flickering.
+ */
+function increaseTtlMs(): number {
+  const refreshSec = state.settings?.parameters.refresh_sec ?? 10;
+  const share = Math.round(refreshSec * 1000 * INCREASE_TTL_SHARE);
+  return Math.max(INCREASE_TTL_MIN_MS, Math.min(INCREASE_TTL_MAX_MS, share));
+}
+
+/**
  * Drop a delta once it has faded, so a stale chip cannot reappear.
  *
  * `at` identifies the change the timer was started for: a newer change replaces
@@ -587,7 +654,7 @@ function recordDelta(
 function expireDelta(metric: Metric, at: number, chip: HTMLElement): void {
   const entry = state.deltas[metric];
   if (!entry || entry.at !== at) return;
-  if (Date.now() - entry.at < INCREASE_TTL_MS) return;
+  if (Date.now() - entry.at < increaseTtlMs()) return;
   state.deltas[metric] = null;
   // The chip's slot stays in the row and keeps its height, so the headline is
   // not re-fitted and the number does not move when the chip expires.
@@ -713,6 +780,31 @@ function syncLogTail(): void {
 /* render                                                              */
 /* ------------------------------------------------------------------ */
 
+function chartShouldShow(): boolean {
+  if (state.subview === 'charts') return true;
+  if (!state.layout.showChart) return false;
+  return state.tab === 'spending' || state.tab === 'requests';
+}
+
+function mountChart(container: HTMLElement, metric: Metric): void {
+  if (chartRenderer) {
+    chartRenderer.reattach(container);
+    chartRenderer.setOptions({ metric, live: !state.chartPinned });
+  } else {
+    chartRenderer = new ChartRenderer(container, {
+      metric,
+      live: !state.chartPinned,
+    });
+  }
+  if (state.chartData && state.chartData.metric === metric && state.chartData.scale === state.chartScale) {
+    chartRenderer.setData(state.chartData);
+  } else {
+    void loadChart().then(() => {
+      if (state.chartData) chartRenderer?.setData(state.chartData);
+    });
+  }
+}
+
 function render(): void {
   renderStatus();
   renderBanner();
@@ -720,7 +812,7 @@ function render(): void {
   // value colours agree with the highlighted tab.
   content.dataset.tabTheme = state.tab;
 
-  if (chartRenderer) {
+  if (chartRenderer && !chartShouldShow()) {
     chartRenderer.destroy();
     chartRenderer = null;
   }
@@ -838,9 +930,7 @@ function buildStrip(metric: Metric): SummaryStrip {
       // A range button selects that range and shows its chart inline, rather
       // than opening a separate chart view.
       state.chartMetric = metric;
-      state.chartScale = cell.key;
-      state.chartAnchor = Date.now();
-      state.chartPinned = false;
+      selectInterval(cell.key);
       if (state.tab === 'models') {
         void loadBreakdown().then(() => render());
       } else {
@@ -853,6 +943,30 @@ function buildStrip(metric: Metric): SummaryStrip {
   return instance;
 }
 
+/**
+ * Select a range button.
+ *
+ * A different interval is a different measurement, so the headline is repainted
+ * rather than rolled from the previous range's total. Without this the number
+ * animated from, say, the 24-hour spend down to the 10-minute spend, which read
+ * as a change in usage rather than as a change of question.
+ */
+function selectInterval(key: ChartScale): void {
+  if (state.chartScale === key) return;
+  state.chartScale = key;
+  state.chartAnchor = Date.now();
+  state.chartPinned = false;
+  state.displayed.spend = null;
+  state.displayed.tokens = null;
+  state.rolls.spend = null;
+  state.rolls.tokens = null;
+  // The chip describes a refresh-to-refresh change within one interval, so a
+  // change recorded for the old range must not be shown against the new one.
+  state.deltas.spend = null;
+  state.deltas.tokens = null;
+  state.headline = null;
+}
+
 /* ---------------------------- spending ---------------------------- */
 
 /**
@@ -863,6 +977,10 @@ function buildStrip(metric: Metric): SummaryStrip {
  */
 function renderInlineChart(metric: Metric): HTMLElement {
   const wrap = el('div', { class: 'inline-chart' });
+
+  // The chart's own metric must match the tab, or the fetch below asks for the
+  // other metric and the renderer reads token bins out of a spend response.
+  state.chartMetric = metric;
 
   const header = el('div', { class: 'inline-chart-header' });
   header.appendChild(
@@ -877,18 +995,11 @@ function renderInlineChart(metric: Metric): HTMLElement {
   const chartWrap = el('div', { class: 'chart-wrap' });
   wrap.appendChild(chartWrap);
 
-  chartRenderer = new ChartRenderer(chartWrap, { metric });
   // The inline chart follows the clock too, so it slides with the tab rather
   // than freezing at the instant the tab was first drawn. A pinned chart is the
   // exception: the user moved it to a past period on purpose.
   if (!state.chartPinned) state.chartAnchor = Date.now();
-  if (state.chartData && state.chartData.metric === metric && state.chartData.scale === state.chartScale) {
-    chartRenderer.setData(state.chartData);
-  } else {
-    void loadChart().then(() => {
-      if (state.chartData) chartRenderer?.setData(state.chartData);
-    });
-  }
+  mountChart(chartWrap, metric);
   return wrap;
 }
 
@@ -1123,8 +1234,9 @@ function paintHeadline(
   target: number | null,
   pending: boolean,
 ): void {
-  // The headline uses the display budget, matching the interval cells above it.
-  const format = (v: number) => formatMetricValue(metric, v);
+  // The headline uses the display budget, matching the interval cells above it,
+  // but states spend finely enough that new usage moves the digits.
+  const format = (v: number) => formatMetricHeadline(metric, v);
 
   if (pending || target === null) {
     value.textContent = DASH;
@@ -1155,9 +1267,13 @@ function paintHeadline(
     return;
   }
 
-  const next: Roll = { from: previous, to: target, startedAt: now, durationMs: HEADLINE_ANIM_MS };
+  // A roll only happens when the rendered text differs, so a change too small to
+  // alter the string is shown but not animated. `format` above keeps three
+  // decimals on spend for exactly this reason.
+  const durationMs = headlineRollMs();
+  const next: Roll = { from: previous, to: target, startedAt: now, durationMs };
   state.rolls[metric] = next;
-  animateHeadline(value, previous, target, format, HEADLINE_ANIM_MS, () => {
+  animateHeadline(value, previous, target, format, durationMs, () => {
     // Only clear the marker if no newer roll has taken over in the meantime.
     if (state.rolls[metric] === next) state.rolls[metric] = null;
   });
@@ -1178,7 +1294,8 @@ function renderDeltaChip(metric: Metric): HTMLElement | null {
 
   const now = Date.now();
   const age = now - entry.at;
-  if (age >= INCREASE_TTL_MS) {
+  const ttl = increaseTtlMs();
+  if (age >= ttl) {
     state.deltas[metric] = null;
     return null;
   }
@@ -1220,7 +1337,7 @@ function renderDeltaChip(metric: Metric): HTMLElement | null {
 
   // A render that lands mid-fade rebuilds the chip, so it resumes at the
   // opacity the old one had reached instead of flashing back to full.
-  const fadeAt = INCREASE_TTL_MS - INCREASE_FADE_MS;
+  const fadeAt = ttl - INCREASE_FADE_MS;
   const fade = () => {
     chip.style.opacity = '0';
   };
@@ -1230,7 +1347,7 @@ function renderDeltaChip(metric: Metric): HTMLElement | null {
   } else {
     window.setTimeout(fade, fadeAt - age);
   }
-  window.setTimeout(() => expireDelta(metric, entry.at, chip), INCREASE_TTL_MS - age);
+  window.setTimeout(() => expireDelta(metric, entry.at, chip), ttl - age);
 
   return chip;
 }
@@ -2579,9 +2696,7 @@ function renderDiagnostics(): HTMLElement {
 function openCharts(metric: Metric, scale: ChartScale): void {
   state.subview = 'charts';
   state.chartMetric = metric;
-  state.chartScale = scale;
-  state.chartAnchor = Date.now();
-  state.chartPinned = false;
+  selectInterval(scale);
   void loadChart().then(() => render());
   render();
 }
@@ -2602,10 +2717,12 @@ function renderCharts(): void {
   const title = el('div', { class: 'subview-title' });
   const total =
     state.chartMetric === 'spend'
-      ? formatSpend(state.chartData?.total_spend_micro ?? null)
-      : formatMetricValue(
+      ? formatMetricHeadline('spend', state.chartData?.total_spend_micro ?? null)
+      : formatMetricHeadline(
           'tokens',
-          (state.chartData?.total_input_tokens ?? 0) + (state.chartData?.total_output_tokens ?? 0),
+          state.chartData
+            ? state.chartData.bins.reduce((sum, bin) => sum + (bin.total_tokens ?? 0), 0)
+            : null,
         );
   title.textContent = `${state.chartMetric === 'spend' ? 'Spend' : 'Tokens'} \u00b7 ${total}`;
   header.appendChild(title);
@@ -2636,7 +2753,7 @@ function renderCharts(): void {
   });
   const label = el('span', {
     class: 'period-label',
-    text: state.chartData ? periodLabel(state.chartData) : '\u2013',
+    text: state.chartData ? periodLabel(state.chartData, !state.chartPinned) : '\u2013',
   });
   const next = el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Next period' });
   next.appendChild(icon(ICONS.next));
@@ -2655,8 +2772,7 @@ function renderCharts(): void {
   const chartWrap = el('div', { class: 'chart-wrap' });
   view.appendChild(chartWrap);
 
-  chartRenderer = new ChartRenderer(chartWrap, { metric: state.chartMetric });
-  if (state.chartData) chartRenderer.setData(state.chartData);
+  mountChart(chartWrap, state.chartMetric);
 
   if (state.chartOptionsOpen) {
     view.appendChild(renderChartOptions());
@@ -2693,9 +2809,7 @@ function renderChartOptions(): HTMLElement {
       text: window.label,
     });
     button.addEventListener('click', () => {
-      state.chartScale = window.key;
-      state.chartAnchor = Date.now();
-      state.chartPinned = false;
+      selectInterval(window.key);
       void loadChart().then(() => render());
     });
     scaleSeg.appendChild(button);
@@ -2717,10 +2831,22 @@ function shiftPeriod(anchor: number, scale: ChartScale, delta: number): number {
   return anchor + delta * CHART_RANGE_MS[scale];
 }
 
-/** Human label for the range the chart covers. */
-function periodLabel(data: ChartData): string {
-  const start = new Date(data.period_start);
-  const end = new Date(new Date(data.period_end).getTime() - 1);
+/**
+ * Human label for the range the chart covers.
+ *
+ * A live chart's window ends at the clock rather than at the moment the data was
+ * fetched, so the label is computed from the axis the renderer is drawing. Read
+ * from `period_end` instead and the label would freeze at the fetch time while
+ * the bars slid underneath it, naming a window that is no longer on screen.
+ */
+function periodLabel(data: ChartData, live: boolean): string {
+  const fetchedEnd = new Date(data.period_end).getTime();
+  const span = fetchedEnd - new Date(data.period_start).getTime();
+  const endMs = live ? Math.max(fetchedEnd, Date.now()) : fetchedEnd;
+  const start = new Date(endMs - span);
+  // The window is half-open, so the last instant it covers is one tick before
+  // its end; stating the end itself would name a time the chart excludes.
+  const end = new Date(endMs - 1);
   const day = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   const time = (d: Date) =>
     d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
